@@ -138,7 +138,7 @@ void torget_settings_click_row(tg_settings_row row) {
        * Raden är nedtonad och trycket ignoreras — hellre en rad som
        * synligt inte går att välja än ett fönster som öppnas och sedan
        * inte kan göra något. ABOUT säger varför: ADDRESS visar streck. */
-#if defined(TORGET_BOARD_191_TOUCH) || defined(TORGET_BOARD_175)
+#if defined(TORGET_BOARD_191_TOUCH) || defined(TORGET_BOARD_175) || defined(TORGET_BOARD_18_V2)
       break; /* USB-only profile: reject untyped OTA images. */
 #endif
       if (!ui.ip[0]) break;
@@ -328,7 +328,7 @@ static void render(void) {
    * raden försvinner — den ska finnas kvar så menyn inte byter form. */
   {
     bool can_update = ui.ip[0] != '\0';
-#if defined(TORGET_BOARD_191_TOUCH) || defined(TORGET_BOARD_175)
+#if defined(TORGET_BOARD_191_TOUCH) || defined(TORGET_BOARD_175) || defined(TORGET_BOARD_18_V2)
     can_update = false;
     if (menu) lv_label_set_text(ui.row_labels[TG_SETTINGS_ROW_UPDATE], "UPDATE VIA USB");
 #endif

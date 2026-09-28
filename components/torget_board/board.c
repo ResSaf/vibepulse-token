@@ -2,7 +2,7 @@
 
 #if defined(TORGET_BOARD_175)
 #include "board_175.inc"
-#elif !defined(TORGET_BOARD_241_V2) && !defined(TORGET_BOARD_191_TOUCH)
+#elif !defined(TORGET_BOARD_241_V2) && !defined(TORGET_BOARD_191_TOUCH) && !defined(TORGET_BOARD_18_V2)
 #include "bsp/touch.h"
 
 esp_err_t tg_board_display_new(size_t transfer_size,
@@ -134,4 +134,26 @@ esp_err_t tg_board_brightness_set(int percent) {
     return esp_lcd_panel_io_tx_param(panel_io, 0x02005100, &value, 1);
 }
 esp_err_t tg_board_brightness_init(void) { return tg_board_brightness_set(0); }
+#elif defined(TORGET_BOARD_18_V2)
+#include "bsp/esp-bsp.h"
+#include "bsp/touch.h"
+
+/* The 1.8 V2 BSP owns the CO5300 QSPI and touch wiring. Its published driver
+ * probes CST816S/FT5x06 while this board is marked CST820; the owner reports
+ * touch working on the named V2 unit. See its physical review for evidence. */
+esp_err_t tg_board_display_new(size_t transfer_size,
+    esp_lcd_panel_handle_t *panel, esp_lcd_panel_io_handle_t *io) {
+    const bsp_display_config_t config = {.max_transfer_sz = transfer_size};
+    return bsp_display_new(&config, panel, io);
+}
+
+esp_err_t tg_board_touch_new(esp_lcd_touch_handle_t *touch) {
+    const bsp_touch_config_t config = {0};
+    return bsp_touch_new(&config, touch);
+}
+
+esp_err_t tg_board_brightness_init(void) { return bsp_display_brightness_init(); }
+esp_err_t tg_board_brightness_set(int percent) {
+    return bsp_display_brightness_set(percent);
+}
 #endif

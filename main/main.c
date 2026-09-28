@@ -209,7 +209,7 @@ uint8_t torget_wifi_signal_bars(void) {
 void torget_keep_awake(void) { s_last_activity_us = esp_timer_get_time(); }
 
 void torget_update_available(const char *version) {
-#if !defined(TORGET_BOARD_191_TOUCH) && !defined(TORGET_BOARD_175)
+#if !defined(TORGET_BOARD_191_TOUCH) && !defined(TORGET_BOARD_175) && !defined(TORGET_BOARD_18_V2)
   torget_ota_service_update_available(version);
 #else
   (void)version;
@@ -898,7 +898,7 @@ static void display_start(void) {
   /* Board code keeps panel MADCTL and touch transformation as a pair. */
   esp_lcd_touch_handle_t tp = NULL;
   esp_err_t touch_err = tg_board_touch_new(&tp);
-#if !defined(TORGET_BOARD_175) && !defined(TORGET_BOARD_191_TOUCH)
+#if !defined(TORGET_BOARD_175) && !defined(TORGET_BOARD_191_TOUCH) && !defined(TORGET_BOARD_18_V2)
   ESP_ERROR_CHECK(touch_err);
 #endif
   if (touch_err == ESP_OK && tp) {
@@ -906,7 +906,7 @@ static void display_start(void) {
       ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, tp);
     s_touch = esp_lv_adapter_register_touch(&adapter_touch);
   } else {
-#if defined(TORGET_BOARD_175) || defined(TORGET_BOARD_191_TOUCH)
+#if defined(TORGET_BOARD_175) || defined(TORGET_BOARD_191_TOUCH) || defined(TORGET_BOARD_18_V2)
     ESP_LOGW(TAG, "board touch unavailable (%s); continuing display-only",
              esp_err_to_name(touch_err));
 #endif
@@ -940,7 +940,7 @@ esp_err_t torget_round_rotation_set(int quarter_turns) {
   if (err != ESP_OK) return err;
   return esp_lcd_panel_io_tx_param(s_panel_io, lcd_cmd, &madctl, 1);
 }
-#elif !defined(TORGET_BOARD_241_V2) && !defined(TORGET_BOARD_191_TOUCH)
+#elif !defined(TORGET_BOARD_241_V2) && !defined(TORGET_BOARD_191_TOUCH) && !defined(TORGET_BOARD_18_V2)
 esp_err_t torget_display_rotation_set(bsp_display_rotation_t rotation) {
   static const uint8_t MADCTL[4] = { 0x00, 0x60, 0xC0, 0xA0 };
   static const int GAP[4][2] = { /* {x_gap, y_gap} per läge */
@@ -1229,7 +1229,7 @@ void app_main(void) {
    * Http-servern och dess minneskostnad existerar först när ett KEY3-håll
    * öppnat underhållsfönstret — en boot utan uppdatering ska ha samma
    * minnesprofil som en build helt utan OTA (frysläxan 2026-08-14). */
-#if !defined(TORGET_BOARD_191_TOUCH) && !defined(TORGET_BOARD_175)
+#if !defined(TORGET_BOARD_191_TOUCH) && !defined(TORGET_BOARD_175) && !defined(TORGET_BOARD_18_V2)
   torget_ota_service_start();
 #endif
   /* Nätvakten sist och lika lat: accesspunkten, http-servern och

@@ -8,6 +8,15 @@
 # kärnkomponenterna — samma kod på Macen som på hyllan, per design.
 cmake_minimum_required(VERSION 3.16)
 include(cmake/torget_board.cmake)
+# ESP-IDF discovers component requirements in a separate early CMake pass.
+# Mirror the selector just as we do for the optional companion paths below.
+set(ENV{TORGET_BOARD} "${TORGET_BOARD}")
+if(TORGET_BOARD STREQUAL "waveshare_18_v2")
+  # The native-size viewport transform needs a temporary LVGL composition
+  # layer. Give its PSRAM-backed LVGL pool room for that layer plus the UI tree.
+  set(SDKCONFIG_DEFAULTS
+      "${CMAKE_CURRENT_SOURCE_DIR}/sdkconfig.defaults;sdkconfig.defaults.waveshare_18_v2")
+endif()
 option(TORGET_ROUND_DIAGNOSTIC "Static 1.75 hardware diagnostic only" OFF)
 if(TORGET_ROUND_DIAGNOSTIC)
   if(NOT TORGET_BOARD STREQUAL "waveshare_175")
@@ -71,6 +80,11 @@ else()
   message(STATUS "Torget: Vibbe/Buddy är bortvald (TORGET_WITH_BUDDY=OFF, frysläxan 2026-08-14)")
 endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+# The external bootloader CMake project otherwise picks macOS's host ar and
+# ranlib. Override C's archive rules during compiler configuration so they use
+# the Xtensa binutils already selected by ESP-IDF's toolchain PATH.
+idf_build_set_property(EXTRA_CMAKE_ARGS
+    "-DCMAKE_USER_MAKE_RULES_OVERRIDE_C:FILEPATH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/xtensa-archive-tools.cmake" APPEND)
 project(torget)
 
 # sdkconfig.defaults only seeds a new sdkconfig; it does not update an old

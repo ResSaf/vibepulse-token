@@ -1,6 +1,6 @@
 #include "rotation.h"
 
-#if defined(TORGET_BOARD_241_V2) || defined(TORGET_BOARD_191_TOUCH)
+#if defined(TORGET_BOARD_241_V2) || defined(TORGET_BOARD_191_TOUCH) || defined(TORGET_BOARD_18_V2)
 /* The square board's measured IMU calibration does not transfer here. */
 void sg_rotation_start(lv_indev_t *touch) { (void)touch; }
 #elif defined(TORGET_BOARD_175)

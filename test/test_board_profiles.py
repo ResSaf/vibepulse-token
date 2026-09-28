@@ -25,16 +25,37 @@ def run(args, **kwargs):
 
 
 class BoardSelectionTests(unittest.TestCase):
+    def test_bsp_selection_survives_idf_early_expansion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "early.cmake"
+            script.write_text(
+                'function(idf_component_register)\n'
+                '  message(STATUS "requirements=${ARGN}")\n'
+                'endfunction()\n'
+                f'include("{ROOT.as_posix()}/components/torget_board/CMakeLists.txt")\n',
+                encoding="utf-8",
+            )
+            for board, selected, excluded in [
+                ("waveshare_18_v2", "amoled_1_8", "amoled_2_16"),
+                ("waveshare_216", "amoled_2_16", "amoled_1_8"),
+            ]:
+                with self.subTest(board=board):
+                    result = run(["cmake", "-P", str(script)],
+                                 env={**os.environ, "TORGET_BOARD": board})
+                    self.assertIn(selected, result.stdout)
+                    self.assertNotIn(excluded, result.stdout)
+
     def test_cmake_profiles_and_unsupported_revision(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp)
             (source / "CMakeLists.txt").write_text(
                 'cmake_minimum_required(VERSION 3.24)\nproject(check NONE)\n'
-                f'include("{ROOT}/cmake/torget_board.cmake")\n'
+                f'include("{ROOT.as_posix()}/cmake/torget_board.cmake")\n'
                 'get_directory_property(defs COMPILE_DEFINITIONS)\n'
                 'message(STATUS "profile=${TORGET_BOARD};defs=${defs}")\n'
             )
             for board, expected in [(None, "waveshare_216;defs="),
+                                    ("waveshare_18_v2", "waveshare_18_v2;defs=TORGET_BOARD_18_V2=1"),
                                     ("waveshare_191_touch", "waveshare_191_touch;defs=TORGET_BOARD_191_TOUCH=1"),
                                     ("waveshare_216", "waveshare_216;defs="),
                                     ("waveshare_241_v2", "waveshare_241_v2;defs=TORGET_BOARD_241_V2=1")]:
@@ -49,6 +70,13 @@ class BoardSelectionTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("V1 is not supported", result.stderr)
+            result = subprocess.run(
+                ["cmake", "-S", str(source), "-B", str(source / "invalid-diagnostic"),
+                 "-DTORGET_BOARD=waveshare_18_v2", "-DTORGET_BOARD_DIAGNOSTIC=ON"],
+                text=True, capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("1.8 V2 native diagnostic is not implemented", result.stderr)
 
     def test_registries_do_not_share_units_or_display_geometry(self):
         square = load_registry(ROOT / "spec")
@@ -58,6 +86,12 @@ class BoardSelectionTests(unittest.TestCase):
         self.assertEqual(landscape.capabilities["display.amoled"]["height"], 450)
         self.assertFalse(set(square.units) & set(landscape.units))
         self.assertEqual(landscape.capabilities["controls.settings"]["states"]["unit_verified"], "unknown")
+
+    def test_18_v2_registry_keeps_corner_touch_unverified(self):
+        portrait = load_registry(ROOT / "spec/boards/waveshare_18_v2")
+        self.assertEqual(portrait.capabilities["display.amoled"]["width"], 368)
+        self.assertEqual(portrait.capabilities["display.amoled"]["height"], 448)
+        self.assertEqual(portrait.capabilities["touch.controller"]["states"]["unit_verified"], "unknown")
 
 
 class NativeV2RasterTests(unittest.TestCase):
@@ -153,6 +187,18 @@ class Native191RasterTests(unittest.TestCase):
     def test_compact_needs_you_never_sends_an_unverified_approval(self):
         with tempfile.TemporaryDirectory(prefix="vibepulse-191-needs-you.") as capture_dir:
             result = run(["sim/build-191/torget-sim", "--vibepulse-needs-you-qa"],
+                         env={**os.environ, "TORGET_CAPTURE_DIR": capture_dir})
+        self.assertNotIn("needs-you verdict:", result.stdout)
+
+
+class Native18InteractionSafetyTests(unittest.TestCase):
+    def test_unverified_touch_never_sends_a_verdict(self):
+        run(["cmake", "-S", "sim", "-B", "sim/build-18-v2", "-G", "Ninja",
+             "-DTORGET_BOARD=waveshare_18_v2",
+             f"-DTORGET_SOLELKOLLEN_DIR={ROOT}/no-companion"])
+        run(["cmake", "--build", "sim/build-18-v2", "--parallel", "2"])
+        with tempfile.TemporaryDirectory(prefix="vibepulse-18-needs-you.") as capture_dir:
+            result = run(["sim/build-18-v2/torget-sim", "--vibepulse-needs-you-qa"],
                          env={**os.environ, "TORGET_CAPTURE_DIR": capture_dir})
         self.assertNotIn("needs-you verdict:", result.stdout)
 
