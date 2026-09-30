@@ -1,3 +1,7 @@
+#if TK_OPENPULSE_AVAILABLE
+#include "app_openpulse.h"
+void openpulse_net_start(void) {}
+#endif
 #include "display_geometry.h"
 /*
  * Torgets värdlager på Macen: hela plattformen + båda apparna i ett
@@ -1801,6 +1805,74 @@ static int run_vibepulse_lovable_qa(void) {
   return capture_failures == 0 ? 0 : 1;
 }
 
+
+#if TK_OPENPULSE_AVAILABLE
+static lv_obj_t *openpulse_find_label(lv_obj_t *root, const char *text) {
+  if (lv_obj_check_type(root, &lv_label_class) &&
+      strcmp(lv_label_get_text(root), text) == 0) return root;
+  for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++) {
+    lv_obj_t *found = openpulse_find_label(lv_obj_get_child(root, i), text);
+    if (found) return found;
+  }
+  return NULL;
+}
+
+static int run_openpulse_labs_qa(void) {
+  torget_app_show(SIM_APP_VIBEPULSE);
+  torget_wifi_status_set_mode(TG_WIFI_STATUS_NORMAL);
+  if (!tk_labs_active(TK_LABS_OPENPULSE)) return 1;
+  size_t length;
+  char *json = read_fixture("openpulse-demo.json", &length);
+  op_snapshot snapshot;
+  if (!json || !op_parse(json, length, &snapshot)) { free(json); return 1; }
+  free(json);
+  openpulse_apply(&snapshot);
+  tokens_show_view(VIEW_OPENPULSE);
+  if (usage_screen_current_view() != VIEW_OPENPULSE || !openpulse_layout_valid()) return 1;
+  dump_frame("openpulse-labs-spend");
+  /* Click the shared key selector from both retained severity states. */
+  for (int severity = 1; severity <= 2; severity++) {
+    snapshot.key_index = openpulse_key_index();
+    snapshot.key_count = 2;
+    snapshot.level = severity;
+    openpulse_apply(&snapshot);
+    char tag[64];
+    snprintf(tag, sizeof tag, "openpulse-key-%d-before", severity);
+    dump_frame(tag);
+    lv_obj_t *key = openpulse_find_label(lv_screen_active(), "DEMO / My API key");
+    if (!key) return 1;
+    lv_obj_send_event(key, LV_EVENT_CLICKED, NULL);
+    if (openpulse_key_index() != (snapshot.key_index + 1) % 2 ||
+        !openpulse_find_label(lv_screen_active(), "NO DATA") ||
+        !openpulse_find_label(lv_screen_active(), "Display budget --")) return 1;
+    snprintf(tag, sizeof tag, "openpulse-key-%d-after", severity);
+    dump_frame(tag);
+  }
+  snapshot.key_index = openpulse_key_index();
+  openpulse_apply(&snapshot);
+  openpulse_set_page(1);
+  if (!openpulse_layout_valid()) return 1;
+  dump_frame("openpulse-labs-details");
+  tokens_show_view(VIEW_CODEX_WEEKLY);
+  if (usage_screen_current_view() != VIEW_CODEX_WEEKLY) return 1;
+  dump_frame("openpulse-labs-codex");
+  torget_settings_open("OPENPULSE LABS", "192.168.1.42");
+  torget_settings_click_slot(TG_SETTINGS_ROW_LABS);
+  torget_settings_click_slot(3);
+  torget_settings_click_slot(3);
+  dump_frame("openpulse-labs-on");
+  if (!tk_labs_selected(TK_LABS_OPENPULSE)) return 1;
+  torget_settings_click_slot(2);
+  if (tk_labs_selected(TK_LABS_OPENPULSE) || !tk_labs_pending()) return 1;
+  dump_frame("openpulse-labs-off-pending");
+  torget_settings_click_slot(3);
+  if (torget_settings_take_intent() != TG_SETTINGS_INTENT_RESTART) return 1;
+  tk_labs_init();
+  if (tk_labs_active(TK_LABS_OPENPULSE) || tk_labs_view_position(VIEW_OPENPULSE) >= 0) return 1;
+  return capture_failures == 0 ? 0 : 1;
+}
+#endif
+
 /* Run in a fresh process for every mask; hit the real shared renderer and
  * update paths with pages absent. Pure policy tests alone cannot catch a NULL
  * label dereference or a tileview column mistaken for a semantic ID. */
@@ -1985,6 +2057,10 @@ int main(int argc, char **argv) {
 
   if (argc == 2 && strcmp(argv[1], "--vibepulse-lovable-qa") == 0)
     return run_vibepulse_lovable_qa();
+#if TK_OPENPULSE_AVAILABLE
+  if (argc == 2 && strcmp(argv[1], "--openpulse-labs-qa") == 0)
+    return run_openpulse_labs_qa();
+#endif
   if (argc == 2 && strcmp(argv[1], "--vibepulse-labs-qa") == 0)
     return run_vibepulse_labs_qa(false);
   if (argc == 2 && strcmp(argv[1], "--vibepulse-labs-captures") == 0)
