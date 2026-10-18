@@ -5499,5 +5499,116 @@ class ProbeTransitionLogTests(unittest.TestCase):
                           "\n".join(captured.output))
 
 
+class GrokEndpointTests(unittest.TestCase):
+    """Exercise the real HTTP route and ingress guards without external I/O."""
+    def setUp(self):
+        from . import grok_monitor
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        patcher = mock.patch.object(grok_monitor, 'state_dir',
+                                    return_value=Path(self.temp.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.monitor = grok_monitor.GrokMonitor('bots')
+
+        class LocalHandler(tokenserver.Handler):
+            grok_monitor = self.monitor
+
+            def log_message(self, *_args):
+                return
+
+        self.handler = LocalHandler
+        self.poll = mock.patch.object(LocalHandler, '_record_panel_poll')
+        self.record = self.poll.start()
+        self.addCleanup(self.poll.stop)
+        self.port = 8737
+
+    def request(self, method='GET', path='/api/grok', body=None, headers=None):
+        # Run BaseHTTPRequestHandler's actual HTTP parser and response writer
+        # over bytes, without requiring a local socket or any external network.
+        body = (body or '').encode('utf-8')
+        headers = {'Host': f'127.0.0.1:{self.port}',
+                   'Content-Length': str(len(body)), **(headers or {})}
+        raw = (f'{method} {path} HTTP/1.0\r\n' +
+               ''.join(f'{key}: {value}\r\n' for key, value in headers.items()) +
+               '\r\n').encode() + body
+        output = bytearray()
+
+        class Transport:
+            def makefile(self, *_args):
+                return io.BytesIO(raw)
+
+            def sendall(self, data):
+                output.extend(data)
+
+            def gettimeout(self):
+                return None
+
+            def settimeout(self, _timeout):
+                return
+
+        self.handler(Transport(), ('127.0.0.1', 10000),
+                     mock.Mock(server_address=('127.0.0.1', self.port)))
+        head, payload = bytes(output).split(b'\r\n\r\n', 1)
+        return int(head.split()[1]), json.loads(payload)
+
+    def post(self, headers=None, body=None):
+        return self.request('POST', '/api/grok/bots',
+                            body if body is not None else json.dumps({
+                                'v': 1, 'bot': 'Research', 'state': 'waiting'}),
+                            {'Content-Type': 'application/json', **(headers or {})})
+
+    def test_enabled_and_disabled_get_post_and_panel_poll(self):
+        self.assertEqual(self.post()[0], 200)
+        code, data = self.request()
+        self.assertEqual(code, 200)
+        self.assertEqual(data['bots'][0]['state'], 'waiting')
+        self.assertEqual(data['active'], 1)
+        self.record.assert_called_once()
+        self.handler.grok_monitor = None
+        self.assertEqual(self.request(), (200, {'v': 1, 'enabled': False}))
+        self.assertEqual(self.post()[0], 404)
+
+    def test_ingress_guards(self):
+        for headers, code in (({'Origin': 'https://example.com'}, 403),
+                              ({'Origin': ''}, 403),
+                              ({'Host': 'attacker.example'}, 403),
+                              ({'Host': '127.0.0.1:1'}, 403),
+                              ({'Content-Type': 'text/plain'}, 415)):
+            with self.subTest(headers=headers):
+                self.assertEqual(self.post(headers)[0], code)
+        with mock.patch.object(self.handler, '_is_loopback', return_value=False):
+            self.assertEqual(self.post()[0], 403)
+        for body in ('{}', '{bad', json.dumps({'v': 1, 'bot': 'a', 'state': 'done',
+                                            'extra': 1}), ' ' * 1025):
+            with self.subTest(body=body[:50]):
+                self.assertEqual(self.post(body=body)[0], 400)
+        self.assertEqual(self.monitor.store.snapshot()['botCount'], 0)
+
+    def test_grok_options_default_off_and_environment(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            args = tokenserver._build_arg_parser().parse_args([])
+            self.assertFalse(args.grok)
+            self.assertEqual(args.grok_source, 'auto')
+            self.assertIsNone(tokenserver.Handler.grok_monitor)
+        with mock.patch.dict(os.environ, {'VIBEPULSE_GROK': '1',
+                                         'VIBEPULSE_GROK_SOURCE': 'manual'}):
+            args = tokenserver._build_arg_parser().parse_args([])
+            self.assertTrue(args.grok)
+            self.assertEqual(args.grok_source, 'manual')
+            args = tokenserver._build_arg_parser().parse_args(['--grok-source', 'bots'])
+            self.assertEqual(args.grok_source, 'bots')
+
+    def test_root_summary_has_only_safe_fields(self):
+        self.post()
+        handler = tokenserver.Handler.__new__(tokenserver.Handler)
+        handler.grok_monitor = self.monitor
+        handler.agent_status = mock.Mock()
+        data = handler._root_payload()
+        self.assertIn('/api/grok', data['endpoints'])
+        self.assertEqual(data['grok'], {'enabled': True, 'source': 'bots',
+                                        'stale': False, 'botCount': 1})
+
+
 if __name__ == "__main__":
     unittest.main()

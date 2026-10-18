@@ -5,6 +5,8 @@ on the [releases page](https://github.com/niclasvestlund-YT/vibepulse/releases).
 
 ## Unreleased
 
+- Add an optional, default-off host Grok preview: xAI API billing, manual quota and local bot status with bounded LAN payloads. See [Grok setup](docs/grok-pulse.md); no firmware changes.
+
 - OpenPulse now appears as the optional OPENROUTER switch in Labs; existing provider choices are preserved on upgrade.
 
 ### Added
