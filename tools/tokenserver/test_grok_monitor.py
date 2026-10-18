@@ -245,3 +245,37 @@ class GrokTests(unittest.TestCase):
                 patch('sys.stderr') as stderr:
             self.assertEqual(grok_status.main(), 1)
             self.assertTrue(stderr.write.called)
+
+    def test_done_is_not_recounted_after_expiry_eviction_or_replay(self):
+        self.post('done', 'solo')
+        self.now += 1801
+        self.post('done', 'solo')
+        self.assertEqual(self.store.snapshot()['doneToday'], 1)
+        self.post('working', 'solo')
+        self.post('done', 'solo')
+        self.assertEqual(self.store.snapshot()['doneToday'], 2)
+        bots = [{'bot': f'bot{i}', 'state': 'done', 'updatedAt': self.now}
+                for i in range(17)]
+        self.write('grok-bots.json', {'v': 1, 'bots': bots})
+        first = self.store.snapshot()['doneToday']
+        self.now += 1
+        self.write('grok-bots.json', {'v': 1, 'bots': bots})
+        self.assertEqual(self.store.snapshot()['doneToday'], first)
+        self.assertEqual(first, 2 + 17)
+
+    def test_transient_read_error_is_retried_without_file_change(self):
+        self.write('grok-bots.json', {'v': 1, 'bots': [
+            {'bot': 'filebot', 'state': 'working', 'updatedAt': self.now}]})
+        real = Path.read_text
+        with patch.object(Path, 'read_text', side_effect=PermissionError('locked')), \
+                self.assertLogs('tokenserver.grok'):
+            self.assertEqual(self.store.snapshot()['bots'], [])
+        with patch.object(Path, 'read_text', real):
+            self.assertEqual(self.store.snapshot()['bots'][0]['name'], 'FILEBOT')
+
+    def test_billing_request_refuses_redirects(self):
+        from urllib.request import Request
+        handler = grok._NoRedirect()
+        with self.assertRaises(ValueError):
+            handler.redirect_request(Request('https://management-api.x.ai/x'),
+                                     None, 302, 'Found', {}, 'http://evil.example/')

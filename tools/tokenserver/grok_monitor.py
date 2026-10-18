@@ -6,9 +6,10 @@ import os
 import threading
 import time
 import unicodedata
+from collections import OrderedDict
 from datetime import datetime
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 if __package__:
     from .state_files import state_dir
@@ -61,14 +62,24 @@ class JsonFile:
             signature = (stat.st_mtime_ns, stat.st_size)
             if signature == self.signature:
                 return self.data
-            self.signature = signature
             if stat.st_size > 65536:
+                self.signature = signature
                 raise ValueError('oversized file')
-            data = validate(json.loads(self.path.read_text(encoding='utf-8')))
+            raw = self.path.read_text(encoding='utf-8')
+            # Only content is cached by signature. A transient I/O error
+            # (locked file, permissions) must be retried on the next poll.
+            self.signature = signature
+            data = validate(json.loads(raw))
             self.data, self.mtime = data, stat.st_mtime
         except FileNotFoundError:
             self.signature = self.data = self.mtime = None
-        except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
+        except OSError:
+            self.signature = self.data = None
+            if not self.warned:
+                log.warning('%s: could not be read; retrying', self.path.name)
+                self.warned = True
+        except (ValueError, TypeError, KeyError, RecursionError, OverflowError,
+                UnicodeDecodeError):
             self.data = None
             if not self.warned:
                 log.warning('%s: invalid input ignored', self.path.name)
@@ -83,6 +94,9 @@ class GrokBotStore:
         self._bots = {}
         self._day = None
         self._done = 0
+        # Last state per bot name for today, kept apart from display leases
+        # and eviction so an expired or replayed "done" never counts twice.
+        self._last_state = OrderedDict()
         self._file = JsonFile(state_dir() / 'grok-bots.json')
         self._loaded = None
 
@@ -107,6 +121,7 @@ class GrokBotStore:
         day = datetime.fromtimestamp(self.clock()).date()
         if day != self._day:
             self._day, self._done = day, 0
+            self._last_state.clear()
 
     def _put(self, name, bot):
         self._roll_day()
@@ -115,9 +130,13 @@ class GrokBotStore:
             # Live updates may share a clock tick; exact file replays cannot.
             if old == bot or old['updatedAt'] > bot['updatedAt']:
                 return
-        if bot['state'] == 'done' and (not old or old['state'] != 'done'):
+        previous = self._last_state.pop(name, None)
+        if bot['state'] == 'done' and previous != 'done':
             if datetime.fromtimestamp(bot['updatedAt']).date() == self._day:
                 self._done = min(MAX_INT, self._done + 1)
+        self._last_state[name] = bot['state']
+        while len(self._last_state) > 256:
+            self._last_state.popitem(last=False)
         self._bots[name] = bot
         if len(self._bots) > 16:
             del self._bots[min(self._bots, key=lambda key: self._bots[key]['updatedAt'])]
@@ -202,6 +221,11 @@ class ManualQuotaSource:
             return result
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError('xAI billing redirect refused')
+
+
 class XaiApiUsageSource:
     def __init__(self, fetch=None, clock=time.time):
         self.clock = clock
@@ -217,10 +241,13 @@ class XaiApiUsageSource:
         self._failed = False
 
     def _request(self):
+        # Never follow redirects: urllib would forward the explicitly set
+        # Authorization header to whatever host the redirect names.
+        opener = build_opener(_NoRedirect)
         request = Request('https://management-api.x.ai/v1/billing/teams/' +
                           quote(self._team, safe='') + '/postpaid/invoice/preview',
                           headers={'Authorization': 'Bearer ' + self._key})
-        with urlopen(request, timeout=15) as response:
+        with opener.open(request, timeout=15) as response:
             return json.load(response)
 
     def poll(self):
