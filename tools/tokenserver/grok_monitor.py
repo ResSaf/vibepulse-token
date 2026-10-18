@@ -358,7 +358,7 @@ class OpenRouterUsageSource(XaiApiUsageSource):
                     result['resetAt'] = stamp.timestamp()
             else:
                 # No budget: compare the key limit with spend from the same
-                # UTC window (usage_daily/weekly/monthly); unlimited keys show
+                # UTC window (usage_daily/weekly/monthly) keys show
                 # month-to-date spend.
                 limit, window = key.get('limit'), key.get('limit_reset')
                 if limit is None:
@@ -370,7 +370,11 @@ class OpenRouterUsageSource(XaiApiUsageSource):
                 else:
                     raise ValueError('unknown limit window')
                 if key.get(field) is not None:
-                    result['spentCents'] = self._cents(key[field])
+                    spent = number(key[field])
+                    # BYOK spend counts against the key limit when the key says so.
+                    if limit is not None and key.get('include_byok_in_limit') is True:
+                        spent += number(key.get('byok_' + field) or 0)
+                    result['spentCents'] = self._cents(spent)
                 if limit is not None:
                     result['limitCents'] = self._cents(limit)
                 if window is not None:

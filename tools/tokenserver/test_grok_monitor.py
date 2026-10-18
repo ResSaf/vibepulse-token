@@ -359,6 +359,14 @@ class OpenRouterTests(GrokFixture):
         self.assertEqual(self.source.snapshot()['spentCents'], 700)
         self.assertNotIn('resetSeconds', self.source.snapshot())
 
+    def test_byok_counts_against_key_limit_only_when_flagged(self):
+        for flag, spent in ((True, 900), (False, 100)):
+            with self.subTest(flag=flag):
+                self.reply({'usage_daily': 1, 'byok_usage_daily': 8, 'limit': 10,
+                            'limit_reset': 'daily', 'include_byok_in_limit': flag})
+                self.source.poll()
+                self.assertEqual(self.source.snapshot()['spentCents'], spent)
+
     def test_key_limit_uses_spend_from_the_same_window(self):
         from datetime import datetime, timezone
         self.now = datetime(2026, 10, 14, 6, tzinfo=timezone.utc).timestamp()  # a Wednesday

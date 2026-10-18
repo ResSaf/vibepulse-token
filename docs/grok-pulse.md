@@ -71,7 +71,8 @@ request. The label is `OPENROUTER`. Spend and limit always come from the same wi
   (no countdown for a lifetime budget).
 - Otherwise, with a key `limit`, spend is `usage_daily`, `usage_weekly` or
   `usage_monthly` to match `limit_reset` (all-time `usage` for a limit that
-  never resets), counting down to the next UTC day, Monday or month.
+  never resets), counting down to the next UTC day, Monday or month. When the
+  key sets `include_byok_in_limit`, the matching `byok_usage*` is added.
 - An unlimited key shows **UTC calendar-month spend for that key**
   (`usage_monthly`), with no limit, counting down to the next month.
 
