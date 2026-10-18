@@ -7,28 +7,30 @@ are separate from real-host and physical-panel verification.
 
 Enable with `--grok` (or `VIBEPULSE_GROK=1`) on your existing tokenserver
 command. `--grok-source auto` is the default; `VIBEPULSE_GROK_SOURCE` accepts
-`auto`, `xai`, `manual`, or `bots`. Restart the existing service after changing
+`auto`, `xai`, `openrouter`, `manual`, or `bots`. Restart the existing service after changing
 code or its environment: use the restart instructions in
 [macOS setup](agent-setup.md) or [Windows setup](windows-setup.md#restarting-the-scheduled-task).
 Do not rerun the Windows installer merely to restart the task.
 
-## Three sources
+## Four sources
 
 - **xai:** xAI API spend from **console.x.ai**, using the
   [documented Management API invoice preview](https://docs.x.ai/developers/rest-api-reference/management/billing).
   It reports month-to-date invoice spend, optional prepaid balance and an
   explicitly supplied positive spending limit, all in USD cents. This is
   **not the X Subscription weekly pool**, which has no documented usage API.
+- **openrouter:** per-key UTC month spend, effective budget or key limit, and
+  optional account credits from the OpenRouter API.
 - **manual:** the percentage you copy from grok.com **Settings → Usage**.
   This remains a manual observation, with age measured from file modification.
 - **bots:** current working/waiting count and locally observed completions
   today. Activity is not a quota measurement.
 
-`auto` selects xai when both credentials are configured, otherwise live bot
-activity (once any bot has reported or completed today), otherwise a valid
-manual file. An API failure keeps the last successful API
-values marked stale; it does not silently switch accounting sources. An
-explicit unavailable source reports `source: "none"` and omits its numbers.
+`auto` selects xai, then openrouter, then live bot activity (once any bot
+has reported or completed today), then a valid manual file. API sources must
+be configured and have a fresh or cached reading; until then they fall through.
+An API failure keeps the last successful API values marked stale. An explicit
+unavailable source reports `source: "none"` and omits its numbers.
 Missing values are omitted, never filled with invented zeroes. API/manual
 readings become stale after ten minutes; API failures mark stale immediately.
 
@@ -50,6 +52,34 @@ polls immediately at startup, then every 300 seconds, with a 15-second timeout.
 It reads `coreInvoice.totalWithCorr.val` (falling back to `amountAfterVat`),
 negates `prepaidCredits.val` for the available credit balance, and uses a
 positive `effectiveSpendingLimit` only. No limit is inferred from a plan.
+
+### OpenRouter API key
+
+Set `OPENROUTER_API_KEY` in the service environment and restart the service.
+Select `--grok-source openrouter` explicitly, or use `auto`. Optionally set
+`OPENROUTER_MANAGEMENT_KEY` to enable account credits; an inference API key
+cannot read that endpoint. Credentials come only from these environment
+variables; this source does not read Keychain or credential files.
+
+The source polls immediately, then every five minutes, using fixed read-only
+[key and credits endpoints](https://openrouter.ai/docs/api-reference/limits),
+with redirects refused, bounded responses and an eight-second timeout per
+request. The label is `OPENROUTER`. Spend and limit always come from the same window:
+
+- With an `effective_budget` (the budget that blocks first), the panel shows
+  that budget's `spend_usd` of `limit_usd` and counts down to its `resets_at`
+  (no countdown for a lifetime budget).
+- Otherwise, with a key `limit`, spend is `usage_daily`, `usage_weekly` or
+  `usage_monthly` to match `limit_reset` (all-time `usage` for a limit that
+  never resets), counting down to the next UTC day, Monday or month.
+- An unlimited key shows **UTC calendar-month spend for that key**
+  (`usage_monthly`), with no limit, counting down to the next month.
+
+This is per-key spend, not account-wide spend. Credits are optional
+account-wide remaining credits (`total_credits - total_usage`), shown only with
+the management key. A credits failure omits credits and marks the reading
+stale. Unknown countdowns and missing numbers are omitted. All monetary values
+are rounded to USD cents. No limit is inferred from a plan.
 
 ### Manual quota file
 
@@ -83,7 +113,8 @@ The CLI accepts `--port` (default **8737**) and returns nonzero on failure.
 States are `working`, `waiting`, `done`, `idle`, `error`; **waiting means
 NEEDS YOU**. This status endpoint cannot approve actions or return answers.
 Bot names contain 1–32 characters after control removal; name and activity
-are displayed as uppercase ASCII (accents folded, other characters dropped)
+keep their case as printable ASCII (accents folded, so `Hårdvara` shows as
+`Hardvara`; other characters dropped)
 and truncated to 16 characters. A name with no displayable character is
 rejected.
 
@@ -113,6 +144,6 @@ no Origin header, JSON content type, known fields and bodies up to 1024 bytes.
 It offers no browser CORS access. Local processes can submit statuses.
 
 Grok data is never sent to VibePulse relays. Management keys stay on the host
-and are never returned or logged; only xAI billing requests carry the key.
+and are never returned or logged; only the corresponding provider billing requests carry its key.
 Bot names/activity and manual labels are visible to LAN clients, so avoid
 sensitive task descriptions. Neither prompts nor chat history are collected.

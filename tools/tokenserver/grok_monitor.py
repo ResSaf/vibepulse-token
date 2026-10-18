@@ -7,14 +7,16 @@ import threading
 import time
 import unicodedata
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 if __package__:
     from .state_files import state_dir
+    from .openrouter_client import Client
 else:
     from state_files import state_dir
+    from openrouter_client import Client
 
 log = logging.getLogger('tokenserver.grok')
 MAX_INT = 2147483647
@@ -33,10 +35,12 @@ def text(value):
     return clean
 
 
-def display(value):
+def display(value, upper=False):
     # The panel's UI fonts carry printable ASCII only; fold accents and drop
-    # anything else rather than shipping glyphs that render as boxes.
-    folded = unicodedata.normalize('NFKD', text(value).upper())
+    # anything else rather than shipping glyphs that render as boxes. Names
+    # and activities keep their case ("Hardvara"); captions are uppercase.
+    value = text(value)
+    folded = unicodedata.normalize('NFKD', value.upper() if upper else value)
     ascii_text = ''.join(c for c in folded if ' ' <= c <= '~').strip()
     return ascii_text[:16].strip()
 
@@ -217,7 +221,7 @@ class ManualQuotaSource:
             if 'resetAt' in data:
                 result['resetSeconds'] = bounded(data['resetAt'] - self.clock())
             if 'label' in data:
-                result['label'] = display(data['label'])
+                result['label'] = display(data['label'], upper=True)
             return result
 
 
@@ -309,6 +313,104 @@ class XaiApiUsageSource:
             return result
 
 
+class OpenRouterUsageSource(XaiApiUsageSource):
+    def __init__(self, client=None, clock=time.time):
+        super().__init__(clock=clock)
+        self._key = os.environ.get('OPENROUTER_API_KEY')
+        self._management_key = os.environ.get('OPENROUTER_MANAGEMENT_KEY')
+        self.configured = bool(self._key)
+        self._client = client or Client()
+
+    @staticmethod
+    def _cents(value):
+        return bounded(round(number(value) * 100))
+
+    def _next_utc(self, window):
+        now = datetime.fromtimestamp(self.clock(), timezone.utc)
+        day = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+        if window == 'daily':
+            return day.timestamp() + 86400
+        if window == 'weekly':  # OpenRouter weeks start Monday 00:00 UTC
+            return day.timestamp() + 86400 * (7 - now.weekday())
+        return datetime(now.year + (now.month == 12), now.month % 12 + 1, 1,
+                        tzinfo=timezone.utc).timestamp()
+
+    def poll(self):
+        if not self.configured:
+            return
+        try:
+            key = self._client.get('key', self._key)
+            result = {}
+            budget = key.get('effective_budget')
+            if budget is not None and not isinstance(budget, dict):
+                raise ValueError('invalid budget')
+            if budget:
+                # The budget that blocks first carries its own window, spend
+                # and reset instant; show exactly that.
+                for field, name in (('spend_usd', 'spentCents'), ('limit_usd', 'limitCents')):
+                    if budget.get(field) is not None:
+                        result[name] = self._cents(budget[field])
+                reset = budget.get('resets_at')
+                if reset is not None:
+                    stamp = datetime.fromisoformat(reset.replace('Z', '+00:00'))
+                    if stamp.tzinfo is None:
+                        raise ValueError('invalid reset')
+                    result['resetAt'] = stamp.timestamp()
+            else:
+                # No budget: compare the key limit with spend from the same
+                # UTC window (usage_daily/weekly/monthly); unlimited keys show
+                # month-to-date spend.
+                limit, window = key.get('limit'), key.get('limit_reset')
+                if limit is None:
+                    field, window = 'usage_monthly', 'monthly'
+                elif window in ('daily', 'weekly', 'monthly'):
+                    field = 'usage_' + window
+                elif window is None:
+                    field = 'usage'  # a limit that never resets counts all-time use
+                else:
+                    raise ValueError('unknown limit window')
+                if key.get(field) is not None:
+                    result['spentCents'] = self._cents(key[field])
+                if limit is not None:
+                    result['limitCents'] = self._cents(limit)
+                if window is not None:
+                    result['resetAt'] = self._next_utc(window)
+            if not any(name in result for name in ('spentCents', 'limitCents')):
+                raise ValueError('missing billing values')
+        except Exception:
+            log.warning('OpenRouter billing poll failed; retaining last good reading')
+            with self._lock:
+                self._failed = True
+            return
+        # Account credits are optional: their failure must not discard key spend.
+        failed = False
+        if self._management_key:
+            try:
+                credits = self._client.get('credits', self._management_key)
+                total, used = credits.get('total_credits'), credits.get('total_usage')
+                if total is not None and used is not None:
+                    result['prepaidCents'] = self._cents(number(total) - number(used))
+            except Exception:
+                log.warning('OpenRouter credits poll failed; omitting account credits')
+                failed = True
+        with self._lock:
+            self._data, self._success, self._failed = result, self.clock(), failed
+
+    def snapshot(self):
+        if not self.configured:
+            return None
+        with self._lock:
+            if self._data is None:
+                return None
+            age = bounded(self.clock() - self._success)
+            result = {'source': 'openrouter', 'label': 'OPENROUTER',
+                      'stale': self._failed or age > 600, 'ageSeconds': age,
+                      **self._data}
+            if 'resetAt' in result:
+                result['resetSeconds'] = bounded(result.pop('resetAt') - self.clock())
+            return result
+
+
 def grok_snapshot(monitor=None):
     if monitor is None:
         return {'v': 1, 'enabled': False}
@@ -317,11 +419,12 @@ def grok_snapshot(monitor=None):
 
 class GrokMonitor:
     def __init__(self, source='auto', clock=time.time, fetch=None):
-        if source not in ('auto', 'xai', 'manual', 'bots'):
+        if source not in ('auto', 'xai', 'openrouter', 'manual', 'bots'):
             raise ValueError('invalid Grok source')
         self.source = source
         self.store = GrokBotStore(clock)
         self.xai = XaiApiUsageSource(fetch, clock)
+        self.openrouter = OpenRouterUsageSource(clock=clock)
         self.manual = ManualQuotaSource(clock)
         self.bots = BotActivitySource(self.store)
         self._lock = threading.Lock()
@@ -330,21 +433,28 @@ class GrokMonitor:
         if self.source in ('auto', 'xai'):
             self.xai.start()
 
+        if self.source in ('auto', 'openrouter'):
+            self.openrouter.start()
+
     def stop(self):
         self.xai.stop()
+        self.openrouter.stop()
 
     def snapshot(self):
         with self._lock:
             data = None
-            # Auto: measured xAI API spend first, then live bot activity, then
+            # Auto: measured xAI, then OpenRouter, then live bot activity, then
             # the owner's manually copied quota. Nothing configured -> 'none'.
-            for name in (('xai', 'bots', 'manual') if self.source == 'auto'
+            for name in (('xai', 'openrouter', 'bots', 'manual') if self.source == 'auto'
                          else (self.source,)):
                 source = getattr(self, name)
                 # An explicitly chosen bot source reports real zeros; in auto
                 # mode an empty bot store defers to the manual quota.
                 data = (source.snapshot(allow_empty=self.source == 'bots')
                         if name == 'bots' else source.snapshot())
+                if (self.source == 'auto' and name == 'xai' and
+                        'ageSeconds' not in (data or {})):
+                    data = None
                 if data is not None:
                     break
             result = {'v': 1, 'enabled': True, **(data or {'source': 'none', 'stale': True})}
