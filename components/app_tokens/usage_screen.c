@@ -14,6 +14,7 @@
 #include "app_tokens_config.h"
 #include "github_status.h"
 #include "lovable_status.h"
+#include "grok_status.h"
 #include "max_tracker.h"
 #include "max_tracker_presenter.h"
 #include "project_star_event.h"
@@ -57,6 +58,7 @@ extern const lv_font_t plex_text_17;
 #define COL_WHITE     lv_color_hex(VP_COLOR_TEXT)
 #define COL_CLAUDE    lv_color_hex(VP_COLOR_CLAUDE)
 #define COL_CODEX     lv_color_hex(VP_COLOR_CODEX)
+#define COL_GROK      lv_color_hex(0xC9D4E8)
 #define COL_STAR      lv_color_hex(TK_PROJECT_STAR_COLOR_HEX)
 #define COL_CLAUDE_MUTED lv_color_hex(0x8A4F42)
 #define COL_CODEX_MUTED  lv_color_hex(0x454B8A)
@@ -149,6 +151,7 @@ typedef struct {
   lv_obj_t *today_fill;
   lv_obj_t *marker;
   lv_obj_t *today;
+  lv_obj_t *today_caption;
   lv_obj_t *reset;
   lv_obj_t *reset_caption;
 #ifdef TORGET_BOARD_175
@@ -345,18 +348,28 @@ static void create_header_hairline(lv_obj_t *parent) {
 #endif
 }
 
+static void create_provider_word(lv_obj_t *tile, const char *name) {
+  lv_obj_t *word=label(tile,&plex_ui_21,COL_WHITE,
+                       64,VP_PROVIDER_Y+1,180,30);
+  lv_obj_set_style_text_letter_space(word,2,0);
+  lv_label_set_text(word,name);
+}
+
+static lv_obj_t *create_header_context(lv_obj_t *tile) {
+  lv_obj_t *context=label(tile,&plex_ui_14,COL_META,
+                          180,VP_PROVIDER_Y+5,228,20);
+  lv_obj_set_style_text_align(context,LV_TEXT_ALIGN_RIGHT,0);
+  lv_obj_set_style_text_letter_space(context,1,0);
+  return context;
+}
+
 static void create_provider_identity(lv_obj_t *tile,
                                      usage_provider provider) {
   if (provider == USAGE_PROVIDER_CLAUDE)
     create_claude_icon(tile, VP_SAFE_X, VP_PROVIDER_Y - 2);
   else
     create_codex_icon(tile, VP_SAFE_X, VP_PROVIDER_Y - 2);
-
-  lv_obj_t *provider_name = label(tile, &plex_ui_21, COL_WHITE,
-                                  64, VP_PROVIDER_Y + 1, 180, 30);
-  lv_obj_set_style_text_letter_space(provider_name, 2, 0);
-  lv_label_set_text(provider_name,
-                    provider == USAGE_PROVIDER_CLAUDE ? "CLAUDE" : "CODEX");
+  create_provider_word(tile,provider == USAGE_PROVIDER_CLAUDE ? "CLAUDE":"CODEX");
 }
 
 /* Delad huvudkonstruktion: providerikon + namn, halo (dold tills en aktiv
@@ -397,10 +410,7 @@ static void create_live_header_widgets(lv_obj_t *tile, usage_provider provider,
   create_provider_identity(tile, provider);
   /* End at x=408: x426..445 belongs to the page-owned Wi-Fi mark, with a
    * hard eighteen-pixel black lane between text and radio status. */
-  lv_obj_t *context = label(tile, &plex_ui_14, COL_META,
-                            180, VP_PROVIDER_Y + 5, 228, 20);
-  lv_obj_set_style_text_align(context, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_style_text_letter_space(context, 1, 0);
+  lv_obj_t *context = create_header_context(tile);
   create_header_hairline(tile);
 
   *halo_out = halo;
@@ -853,6 +863,7 @@ static void refresh_lovable_age(int64_t now_us) {
   }
 }
 
+
 static void create_lovable_page(void) {
   lovable_page *page = &ui.lovable;
   memset(page, 0, sizeof *page);
@@ -1084,8 +1095,8 @@ static void create_stat(lv_obj_t *tile, lv_obj_t **value_out,
 }
 
 #ifdef TORGET_BOARD_175
-static void round_ring_draw(lv_event_t *event) {
-  quota_page *page = lv_event_get_user_data(event);
+static void draw_quota_ring(lv_event_t *event, quota_page *page,
+                            lv_color_t accent, lv_color_t muted) {
   lv_layer_t *layer = lv_event_get_layer(event);
   lv_area_t coords;
   lv_obj_get_coords(page->track, &coords);
@@ -1095,17 +1106,15 @@ static void round_ring_draw(lv_event_t *event) {
   arc.center.y = coords.y1 + VP_ROUND_RING_SIZE / 2;
   arc.radius = VP_ROUND_RING_SIZE / 2;
   arc.width = VP_ROUND_RING_WIDTH;
-  arc.opa = LV_OPA_COVER;
+  arc.opa = lv_obj_get_style_arc_opa(page->track,0);
   arc.start_angle = 270;
   arc.end_angle = 630;
   arc.color = COL_TRACK;
   lv_draw_arc(layer, &arc);
   usage_today_bar_view *bar = &page->round_bar;
   if (!bar->has_total || bar->total_px == 0) return;
-  bool claude = page->provider == USAGE_PROVIDER_CLAUDE;
-  lv_color_t accent = claude ? COL_CLAUDE : COL_CODEX;
   arc.end_angle = 270 + bar->total_px;
-  arc.color = bar->has_today ? (claude ? COL_CLAUDE_MUTED : COL_CODEX_MUTED) : accent;
+  arc.color = bar->has_today ? muted : accent;
   lv_draw_arc(layer, &arc);
   if (bar->has_today && bar->today_px > 0) {
     arc.start_angle = 270 + bar->baseline_px;
@@ -1119,6 +1128,13 @@ static void round_ring_draw(lv_event_t *event) {
       lv_draw_arc(layer, &arc);
     }
   }
+}
+
+static void round_ring_draw(lv_event_t *event) {
+  quota_page *page = lv_event_get_user_data(event);
+  bool claude = page->provider == USAGE_PROVIDER_CLAUDE;
+  draw_quota_ring(event, page, claude ? COL_CLAUDE : COL_CODEX,
+                  claude ? COL_CLAUDE_MUTED : COL_CODEX_MUTED);
 }
 
 static void create_round_quota(quota_page *page, int index) {
@@ -1138,6 +1154,7 @@ static void create_round_quota(quota_page *page, int index) {
   lv_label_set_text(page->percent_unit, "%");
   lv_obj_t *today_caption = label(page->tile, &plex_ui_14, COL_LABEL,
                                   80, VP_ROUND_STAT_CAPTION_Y, 128, 21);
+  page->today_caption = today_caption;
   lv_label_set_text(today_caption, "USED TODAY");
   lv_obj_set_style_text_align(today_caption, LV_TEXT_ALIGN_CENTER, 0);
   page->today = label(page->tile, &plex_round_32, accent,
@@ -1153,35 +1170,7 @@ static void create_round_quota(quota_page *page, int index) {
 }
 #endif
 
-static void create_quota_page(quota_page *page, int index,
-                              usage_quota_scope scope,
-                              usage_provider provider) {
-  memset(page, 0, sizeof *page);
-  page->scope = scope;
-  page->provider = provider;
-  page->tile = new_tile(index);
-  create_quota_header(page);
-
-#ifdef TORGET_BOARD_175
-  create_round_quota(page, index);
-  return;
-#endif
-
-  page->quota = label(page->tile, &plex_ui_21, COL_LABEL,
-                      VP_SAFE_X, VP_QUOTA_Y, VP_CONTENT_W, 30);
-  lv_obj_set_style_text_letter_space(page->quota, 2, 0);
-
-  page->percent = label(page->tile, &plex_num_164, COL_WHITE,
-                        16, VP_PERCENT_Y, 448, 190);
-#ifdef TORGET_BOARD_191_TOUCH
-  lv_obj_set_style_text_font(page->percent, &plex_quota_84, 0);
-  lv_obj_set_size(page->percent, 266, 90);
-  lv_obj_set_style_text_letter_space(page->percent, -4, 0);
-#else
-  lv_obj_set_style_text_letter_space(page->percent, -9, 0);
-#endif
-  lv_label_set_text(page->percent, "–");
-
+static void create_quota_bar(quota_page *page, usage_provider provider) {
   page->track = bare(page->tile);
   lv_obj_set_pos(page->track, VP_SAFE_X, VP_BAR_Y);
   lv_obj_set_size(page->track, VP_CONTENT_W, VP_BAR_H);
@@ -1214,6 +1203,39 @@ static void create_quota_page(quota_page *page, int index,
   lv_obj_set_style_bg_color(page->marker, COL_WHITE, 0);
   lv_obj_add_flag(page->marker, LV_OBJ_FLAG_HIDDEN);
 
+}
+
+static void create_quota_page(quota_page *page, int index,
+                              usage_quota_scope scope,
+                              usage_provider provider) {
+  memset(page, 0, sizeof *page);
+  page->scope = scope;
+  page->provider = provider;
+  page->tile = new_tile(index);
+  create_quota_header(page);
+
+#ifdef TORGET_BOARD_175
+  create_round_quota(page, index);
+  return;
+#endif
+
+  page->quota = label(page->tile, &plex_ui_21, COL_LABEL,
+                      VP_SAFE_X, VP_QUOTA_Y, VP_CONTENT_W, 30);
+  lv_obj_set_style_text_letter_space(page->quota, 2, 0);
+
+  page->percent = label(page->tile, &plex_num_164, COL_WHITE,
+                        16, VP_PERCENT_Y, 448, 190);
+#ifdef TORGET_BOARD_191_TOUCH
+  lv_obj_set_style_text_font(page->percent, &plex_quota_84, 0);
+  lv_obj_set_size(page->percent, 266, 90);
+  lv_obj_set_style_text_letter_space(page->percent, -4, 0);
+#else
+  lv_obj_set_style_text_letter_space(page->percent, -9, 0);
+#endif
+  lv_label_set_text(page->percent, "–");
+
+  create_quota_bar(page, provider);
+
   create_stat(page->tile, &page->today, NULL, VP_SAFE_X, 210, false,
               provider == USAGE_PROVIDER_CLAUDE ? COL_CLAUDE : COL_CODEX,
               "USED TODAY");
@@ -1223,6 +1245,554 @@ static void create_quota_page(quota_page *page, int index,
   lv_label_set_text(page->reset, "–");
   create_pager(page->tile, index);
 }
+
+#if TK_GROK_SCREEN_ENABLED
+static struct {
+  quota_page gauge;
+  lv_obj_t *tile, *context, *provenance, *caption, *hero, *sub, *empty, *currency, *est, *bot_counts;
+  lv_obj_t *left, *left_caption, *reset, *reset_caption;
+  lv_obj_t *dot[4], *name[4], *activity[4], *state[4];
+  tk_grok_status status, shown;
+  int64_t applied_at_us, shown_at_us;
+  bool has_data, has_snapshot, rendered_stale, rendered_rows_stale;
+  char rendered_provenance[48];
+} grok_page;
+#define GROK_FEED_STALE_S 90
+
+/* Feed polls and the 100ms age tick must not invalidate unchanged labels. */
+static void grok_text(lv_obj_t *obj, const char *text) {
+  if (strcmp(lv_label_get_text(obj),text)) lv_label_set_text(obj,text);
+}
+static void grok_visible(lv_obj_t *obj, bool visible) {
+  if (visible == lv_obj_has_flag(obj,LV_OBJ_FLAG_HIDDEN)) {
+    if (visible) lv_obj_remove_flag(obj,LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(obj,LV_OBJ_FLAG_HIDDEN);
+  }
+}
+static void apply_grok_page(const tk_grok_status *s, int64_t now_us);
+static int grok_window_seconds(const tk_grok_status *s) {
+  if (s->has_window) return s->window_seconds;
+  return 0;
+}
+static int grok_pace(int32_t reset_seconds, int window, int span) {
+  /* Elapsed share of the window in [0, span]; computed in 64 bits so a long
+     reset against a short window cannot wrap when narrowed. */
+  if (window<=0) return 0;
+  int64_t pace=(int64_t)span-(int64_t)reset_seconds*span/window;
+  if (pace<0) pace=0;
+  if (pace>span) pace=span;
+  return (int)pace;
+}
+static const char *grok_money_caption(const tk_grok_status *s, bool budget) {
+  if (!strcmp(s->source,"xai")) {
+    const char *caption=budget ? "POSTPAID LIMIT":"POSTPAID · MONTH";
+    lv_point_t size;
+    lv_text_get_size(&size,caption,lv_obj_get_style_text_font(grok_page.caption,0),
+                     lv_obj_get_style_text_letter_space(grok_page.caption,0),0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+    return size.x>lv_obj_get_style_width(grok_page.caption,0) ? "POSTPAID":caption;
+  }
+  if (s->has_window) {
+    if (s->window_seconds==86400) return budget ? "DAILY BUDGET":"SPEND · DAY";
+    if (s->window_seconds==604800) return budget ? "WEEKLY BUDGET":"SPEND · WEEK";
+    if (s->window_seconds>=28*86400 && s->window_seconds<=31*86400)
+      return budget ? "MONTHLY BUDGET":"SPEND · MONTH";
+  }
+  return budget ? "BUDGET":"SPEND";
+}
+#ifdef TORGET_BOARD_175
+static void grok_ring_draw(lv_event_t *event) {
+  quota_page *page=&grok_page.gauge;
+  draw_quota_ring(event,page,COL_GROK,COL_GROK);
+  const tk_grok_status *s=&grok_page.shown;
+  int window=grok_window_seconds(s);
+  if (!s->has_reset || !window || !page->round_bar.has_total) return;
+  lv_area_t coords;
+  lv_obj_get_coords(page->track,&coords);
+  lv_draw_arc_dsc_t tick;
+  lv_draw_arc_dsc_init(&tick);
+  tick.center.x=coords.x1+VP_ROUND_RING_SIZE/2;
+  tick.center.y=coords.y1+VP_ROUND_RING_SIZE/2;
+  tick.radius=VP_ROUND_RING_SIZE/2;
+  tick.width=13;
+  tick.opa=lv_obj_get_style_arc_opa(page->track,0);
+  tick.color=COL_WHITE;
+  int pace=grok_pace(s->reset_seconds,window,360);
+  tick.start_angle=269+pace; tick.end_angle=270+pace;
+  lv_draw_arc(lv_event_get_layer(event),&tick);
+}
+#endif
+static void create_grok_page(void) {
+  memset(&grok_page,0,sizeof grok_page);
+  lv_obj_t *tile=grok_page.tile=new_tile(VIEW_GROK);
+  quota_page *g=&grok_page.gauge;
+  g->tile=tile;
+#ifdef TORGET_BOARD_175
+  create_round_quota(g,VIEW_GROK);
+  lv_obj_remove_event_cb(g->track,round_ring_draw);
+  lv_obj_add_event_cb(g->track,grok_ring_draw,LV_EVENT_DRAW_MAIN,NULL);
+  grok_visible(g->percent_unit,false);
+  lv_obj_t *title=label(tile,&plex_ui_21,COL_GROK,90,VP_ROUND_PROVIDER_Y,300,30);
+  lv_obj_set_style_text_align(title,LV_TEXT_ALIGN_CENTER,0);
+  lv_obj_set_style_text_letter_space(title,3,0);
+  lv_label_set_text(title,"GROK");
+  grok_page.bot_counts=label(tile,&plex_ui_12,COL_META,70,155,340,18);
+  lv_obj_set_style_text_align(grok_page.bot_counts,LV_TEXT_ALIGN_CENTER,0);
+  grok_page.caption=g->quota;
+  grok_page.hero=g->percent;
+  lv_obj_set_size(g->percent,340,115);
+  lv_obj_set_style_text_align(g->percent,LV_TEXT_ALIGN_CENTER,0);
+  grok_page.sub=label(tile,&plex_ui_16,COL_GROK,70,280,340,24);
+  lv_obj_set_style_text_align(grok_page.sub,LV_TEXT_ALIGN_CENTER,0);
+  grok_page.left=g->today; grok_page.reset=g->reset;
+  lv_obj_set_style_text_color(grok_page.left,COL_GROK,0);
+  grok_page.left_caption=g->today_caption;
+  grok_page.reset_caption=g->reset_caption;
+  grok_page.context=label(tile,&plex_ui_14,COL_META,70,372,340,22);
+  grok_page.provenance=label(tile,&plex_ui_12,COL_META,90,402,300,18);
+  lv_label_set_long_mode(grok_page.provenance,LV_LABEL_LONG_DOT);
+  grok_page.empty=label(tile,&plex_ui_12,COL_MUTED,90,350,300,18);
+#else
+  lv_obj_t *badge=bare(tile);
+  lv_obj_set_pos(badge,VP_SAFE_X,VP_PROVIDER_Y-2);
+  lv_obj_set_size(badge,32,32);
+  lv_obj_set_style_radius(badge,LV_RADIUS_CIRCLE,0);
+  lv_obj_set_style_bg_color(badge,COL_TRACK,0);
+  lv_obj_set_style_bg_opa(badge,LV_OPA_COVER,0);
+  lv_obj_set_style_border_width(badge,2,0);
+  lv_obj_set_style_border_color(badge,COL_GROK,0);
+  static const lv_point_precise_t slash_points[]={{8,24},{20,4}};
+  lv_obj_t *slash=lv_line_create(badge);
+  lv_line_set_points(slash,slash_points,2);
+  lv_obj_set_style_line_color(slash,COL_WHITE,0);
+  lv_obj_set_style_line_width(slash,2,0);
+  create_provider_word(tile,"GROK");
+  grok_page.context=create_header_context(tile);
+  create_header_hairline(tile);
+  grok_page.caption=label(tile,&plex_ui_21,COL_LABEL,VP_SAFE_X,VP_QUOTA_Y,VP_CONTENT_W,30);
+  lv_obj_set_style_text_letter_space(grok_page.caption,2,0);
+  grok_page.hero=label(tile,&plex_money_118,COL_WHITE,16,105,448,130);
+  create_quota_bar(g,USAGE_PROVIDER_CODEX);
+  lv_obj_set_style_bg_color(g->baseline_fill,COL_GROK,0);
+  lv_obj_set_style_bg_color(g->today_fill,COL_GROK,0);
+  create_stat(tile,&grok_page.left,&grok_page.left_caption,VP_SAFE_X,210,false,COL_GROK,"LEFT");
+  create_stat(tile,&grok_page.reset,&grok_page.reset_caption,RIGHT_STAT_X,RIGHT_STAT_W,true,COL_WHITE,"TO RESET");
+  grok_page.sub=label(tile,&plex_ui_14,COL_GROK,22,232,436,22);
+  grok_page.empty=label(tile,&plex_ui_12,COL_MUTED,22,350,436,20);
+  grok_page.provenance=label(tile,&plex_ui_12,COL_MUTED,22,429,436,18);
+#ifdef TORGET_BOARD_191_TOUCH
+  grok_page.currency=label(tile,&plex_ui_21,COL_WHITE,22,103,20,30);
+  lv_label_set_text(grok_page.currency,"$");
+  grok_visible(grok_page.currency,false);
+  lv_obj_set_width(grok_page.caption,212);
+  lv_label_set_long_mode(grok_page.caption,LV_LABEL_LONG_DOT);
+  lv_obj_set_pos(grok_page.hero,16,VP_PERCENT_Y);
+  lv_obj_set_size(grok_page.hero,266,90);
+  lv_obj_set_style_text_font(grok_page.hero,&plex_money_35,0);
+  grok_visible(grok_page.left,false); grok_visible(grok_page.left_caption,false);
+  grok_visible(grok_page.reset,false); grok_visible(grok_page.reset_caption,false);
+  lv_obj_set_pos(grok_page.sub,22,154); lv_obj_set_width(grok_page.sub,260);
+  lv_obj_set_pos(grok_page.left,22,174); lv_obj_set_size(grok_page.left,130,18);
+  lv_obj_set_pos(grok_page.reset,152,174); lv_obj_set_size(grok_page.reset,130,18);
+  lv_obj_set_style_text_font(grok_page.reset,&plex_ui_12,0);
+  lv_obj_set_pos(grok_page.provenance,22,208);
+  lv_obj_set_pos(grok_page.empty,286,100); lv_obj_set_width(grok_page.empty,172);
+#else
+  /* Keep the native quota bar's construction and width, compact its rhythm. */
+  lv_obj_set_y(g->track,258); lv_obj_set_y(g->marker,254);
+  lv_obj_set_y(grok_page.left,286); lv_obj_set_y(grok_page.reset,286);
+  lv_obj_set_y(grok_page.left_caption,323); lv_obj_set_y(grok_page.reset_caption,323);
+  create_hairline(tile,340);
+#endif
+  create_pager(tile,VIEW_GROK);
+#endif
+  for (unsigned i=0;i<4;i++) {
+    int x=VP_SAFE_X,y=350+i*25,w=VP_CONTENT_W;
+#ifdef TORGET_BOARD_191_TOUCH
+    x=302; y=60+i*43; w=156;
+#endif
+    grok_page.dot[i]=bare(tile);
+    lv_obj_set_pos(grok_page.dot[i],x,y+4); lv_obj_set_size(grok_page.dot[i],8,8);
+#ifdef TORGET_BOARD_18_V2
+    /* Compensate the board's nonuniform viewport scale: eight native pixels. */
+    lv_obj_set_size(grok_page.dot[i],10,8);
+#endif
+    lv_obj_set_style_radius(grok_page.dot[i],LV_RADIUS_CIRCLE,0);
+    lv_obj_set_style_bg_opa(grok_page.dot[i],LV_OPA_COVER,0);
+    grok_page.name[i]=label(tile,&plex_ui_16,COL_WHITE,x+14,y,124,22);
+    grok_page.activity[i]=label(tile,&plex_ui_12,COL_MUTED,x+144,y+3,w-250,18);
+    grok_page.state[i]=label(tile,&plex_ui_14,COL_META,x+w-104,y+1,104,22);
+    lv_obj_set_style_text_align(grok_page.state[i],LV_TEXT_ALIGN_RIGHT,0);
+#ifdef TORGET_BOARD_191_TOUCH
+    lv_obj_set_pos(grok_page.activity[i],x+14,y+17); lv_obj_set_size(grok_page.activity[i],w-14,14);
+    lv_obj_set_pos(grok_page.state[i],x+14,y+30); lv_obj_set_size(grok_page.state[i],w-14,14);
+    lv_obj_set_style_text_font(grok_page.state[i],&plex_ui_12,0);
+    lv_obj_set_style_text_align(grok_page.state[i],LV_TEXT_ALIGN_LEFT,0);
+#endif
+    lv_label_set_long_mode(grok_page.name[i],LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(grok_page.activity[i],LV_LABEL_LONG_DOT);
+  }
+#ifdef TORGET_BOARD_175
+  grok_visible(grok_page.empty,false);
+  lv_obj_t *center[]={grok_page.left_caption,grok_page.context,grok_page.provenance,grok_page.empty};
+  for(unsigned i=0;i<4;i++) lv_obj_set_style_text_align(center[i],LV_TEXT_ALIGN_CENTER,0);
+#endif
+  grok_page.est=label(tile,&plex_ui_12,COL_GROK,410,VP_QUOTA_Y+3,34,18);
+  lv_obj_set_style_text_align(grok_page.est,LV_TEXT_ALIGN_CENTER,0);
+  lv_obj_set_style_border_width(grok_page.est,1,0);
+  lv_obj_set_style_border_color(grok_page.est,COL_GROK,0);
+  lv_obj_set_style_radius(grok_page.est,5,0);
+  lv_label_set_text(grok_page.est,"EST");
+#ifdef TORGET_BOARD_175
+  lv_obj_set_pos(grok_page.est,355,234);
+#elif defined(TORGET_BOARD_191_TOUCH)
+  lv_obj_set_x(grok_page.est,245);
+#endif
+  lv_label_set_text(grok_page.empty,"NO BOTS REPORTING");
+  lv_label_set_text(grok_page.reset,"–");
+  const tk_grok_status empty={.source="none"};
+  apply_grok_page(&empty,0);
+  grok_page.has_snapshot=false;
+  /* Empty initialization dimmed the gauge; the first live reading restores it. */
+  grok_page.rendered_stale=true;
+  grok_page.rendered_rows_stale=false;
+  lv_obj_set_style_text_opa(grok_page.hero,LV_OPA_COVER,0);
+#ifdef TORGET_BOARD_175
+  lv_obj_set_style_text_opa(grok_page.gauge.percent_unit,LV_OPA_COVER,0);
+#endif
+  grok_text(grok_page.context,"");
+  grok_text(grok_page.provenance,"WAITING");
+  snprintf(grok_page.rendered_provenance,sizeof grok_page.rendered_provenance,"WAITING");
+}
+static void grok_dollars(char *out, size_t cap, int32_t cents, bool full_precision) {
+  if (cents<100000 && !full_precision && cents%100==0) snprintf(out,cap,"$%ld",(long)(cents/100));
+  else if (cents<100000) snprintf(out,cap,"$%ld.%02ld",(long)(cents/100),(long)(cents%100));
+  else if (cents>=100000000) snprintf(out,cap,"$%ld,%03ld,%03ld",(long)(cents/100000000),(long)(cents/100000%1000),(long)(cents/100%1000));
+  else snprintf(out,cap,"$%ld,%03ld",(long)(cents/100000),(long)(cents/100%1000));
+  if (full_precision && cents>=100000) {
+    size_t len=strlen(out);
+    snprintf(out+len,cap-len,".%02ld",(long)(cents%100));
+  }
+}
+/* Comparing the rendered opacity also handles round labels changing roles. */
+static void grok_dim_text(lv_obj_t *obj, bool stale) {
+  if (!obj) return;
+  lv_opa_t opa=stale ? LV_OPA_50:LV_OPA_COVER;
+  if (lv_obj_get_style_text_opa(obj,0)!=opa) lv_obj_set_style_text_opa(obj,opa,0);
+}
+static void refresh_grok_age(int64_t now_us) {
+  if (!grok_page.tile || !grok_page.has_snapshot) return;
+  const tk_grok_status *feed=&grok_page.status;
+  const tk_grok_status *s=&grok_page.shown;
+  int64_t feed_age=now_us>grok_page.applied_at_us ? (now_us-grok_page.applied_at_us)/1000000 : 0;
+  int64_t elapsed=now_us>grok_page.shown_at_us ? (now_us-grok_page.shown_at_us)/1000000 : 0;
+  bool feed_stale=feed_age>GROK_FEED_STALE_S;
+  /* A retained reading the latest feed no longer carries is cached. */
+  bool superseded=grok_page.shown_at_us!=grok_page.applied_at_us;
+  bool stale=feed_stale || superseded || s->stale || elapsed>600 ||
+    (s->has_reset && elapsed>=s->reset_seconds) ||
+    (s->has_age && s->age_seconds+elapsed>600) || !feed->enabled ||
+    ((!strcmp(s->source,"xai") || !strcmp(s->source,"openrouter")) && !s->has_spent) ||
+    (!strcmp(s->source,"plan") && !s->has_used) || !strcmp(s->source,"none");
+  char text[48];
+  if (!feed->enabled) snprintf(text,sizeof text,"OFF ON COMPUTER%s",stale ? " · CACHED":"");
+  else if (!strcmp(s->source,"xai")) snprintf(text,sizeof text,"XAI API · %s",stale ? "CACHED":"LIVE");
+  else if (!strcmp(s->source,"openrouter")) snprintf(text,sizeof text,"OPENROUTER · %s",stale ? "CACHED":"LIVE");
+  else if (!strcmp(s->source,"plan")) {
+    if (s->has_age) snprintf(text,sizeof text,"PLAN · %s · %lld MIN%s",s->estimated ? "EST":"GROK.COM",(long long)((s->age_seconds+elapsed)/60),stale ? " · CACHED":"");
+    else snprintf(text,sizeof text,"PLAN · %s%s",s->estimated ? "EST FROM BOTS":"GROK.COM · AGE UNKNOWN",stale ? " · CACHED":"");
+  } else if (!strcmp(s->source,"bots")) snprintf(text,sizeof text,"BOT ACTIVITY%s",stale ? " · CACHED":"");
+  else snprintf(text,sizeof text,"%s%s",feed_stale ? "NO CONNECTION":"WAITING",stale ? " · CACHED":"");
+  /* Only touch LVGL when the rendered text actually changes (100 ms tick). */
+  if (strcmp(text,grok_page.rendered_provenance)) {
+    snprintf(grok_page.rendered_provenance,sizeof grok_page.rendered_provenance,"%s",text);
+    lv_label_set_text(grok_page.provenance,text);
+  }
+  grok_dim_text(grok_page.hero,stale);
+  grok_dim_text(grok_page.currency,stale);
+  grok_dim_text(grok_page.sub,stale);
+  bool left_stale=stale, reset_stale=stale;
+#ifdef TORGET_BOARD_175
+  grok_dim_text(grok_page.gauge.percent_unit,stale);
+  if (strcmp(s->source,"plan")) {
+    left_stale=feed_stale;
+    if (feed->bot_count) reset_stale=feed_stale;
+  }
+#endif
+  grok_dim_text(grok_page.left,left_stale);
+  grok_dim_text(grok_page.left_caption,left_stale);
+  grok_dim_text(grok_page.reset,reset_stale);
+  grok_dim_text(grok_page.reset_caption,reset_stale);
+  if (stale!=grok_page.rendered_stale) {
+    grok_page.rendered_stale=stale;
+#ifdef TORGET_BOARD_175
+    lv_obj_set_style_arc_opa(grok_page.gauge.track,stale ? LV_OPA_50:LV_OPA_COVER,0);
+    lv_obj_invalidate(grok_page.gauge.track);
+#else
+    lv_obj_set_style_bg_opa(grok_page.gauge.baseline_fill,stale ? LV_OPA_50:LV_OPA_COVER,0);
+    lv_obj_set_style_bg_opa(grok_page.gauge.marker,stale ? LV_OPA_50:LV_OPA_COVER,0);
+#endif
+  }
+  if (feed_stale!=grok_page.rendered_rows_stale) {
+    lv_obj_set_style_text_opa(grok_page.context,feed_stale ? LV_OPA_40:LV_OPA_COVER,0);
+#ifdef TORGET_BOARD_175
+    lv_obj_set_style_text_opa(grok_page.bot_counts,feed_stale ? LV_OPA_40:LV_OPA_COVER,0);
+#endif
+    grok_page.rendered_rows_stale=feed_stale;
+    for (unsigned i=0;i<4;i++) {
+      lv_obj_t *objects[]={grok_page.dot[i],grok_page.name[i],grok_page.state[i],grok_page.activity[i]};
+      for (unsigned j=0;j<4;j++) {
+        if (j==0) lv_obj_set_style_bg_opa(objects[j],feed_stale ? LV_OPA_40:LV_OPA_COVER,0);
+        else lv_obj_set_style_text_opa(objects[j],feed_stale ? LV_OPA_40:LV_OPA_COVER,0);
+      }
+    }
+  }
+  if (grok_page.has_data
+#ifdef TORGET_BOARD_175
+      && ((feed->enabled && !feed->bot_count) || !strcmp(s->source,"plan"))
+#endif
+      ) {
+    int64_t left=s->reset_seconds>elapsed ? s->reset_seconds-elapsed:0;
+    if (s->has_reset) snprintf(text,sizeof text,"%lldD %lldH",(long long)(left/86400),(long long)(left/3600%24));
+    else snprintf(text,sizeof text,"–");
+#ifdef TORGET_BOARD_191_TOUCH
+    if(s->has_reset) snprintf(text,sizeof text,"%lldD %lldH TO RESET",(long long)(left/86400),(long long)(left/3600%24));
+#endif
+    grok_text(grok_page.reset,text);
+  }
+}
+static const char *grok_state(const tk_grok_bot *bot, lv_color_t *color) {
+  *color=COL_MUTED;
+  if (!strcmp(bot->state,"working")) { *color=COL_GROK; return "WORKING"; }
+  if (!strcmp(bot->state,"waiting")) { *color=COL_STAR; return "NEEDS YOU"; }
+  if (!strcmp(bot->state,"done")) { *color=lv_color_hex(0x6FC795); return "DONE"; }
+  if (!strcmp(bot->state,"error")) { *color=lv_color_hex(0xE5484D); return "ERROR"; }
+  return "IDLE";
+}
+static void apply_grok_page(const tk_grok_status *s, int64_t now_us) {
+  bool money=!strcmp(s->source,"xai") || !strcmp(s->source,"openrouter");
+  bool plan=!strcmp(s->source,"plan"), bots=!strcmp(s->source,"bots");
+  bool data=s->enabled && ((money && s->has_spent) || (plan && s->has_used) || bots);
+  grok_page.has_snapshot=true; grok_page.status=*s; grok_page.applied_at_us=now_us;
+  char text[96],amount[32];
+  if (data || !grok_page.has_data) {
+#ifdef TORGET_BOARD_175
+    bool pace_changed=s->has_reset!=grok_page.shown.has_reset ||
+      s->reset_seconds!=grok_page.shown.reset_seconds ||
+      grok_window_seconds(s)!=grok_window_seconds(&grok_page.shown) ||
+      strcmp(s->source,grok_page.shown.source);
+#endif
+    grok_page.shown=*s; grok_page.shown_at_us=now_us;
+    bool budget=money && s->has_limit && s->limit_cents>0;
+    bool percent=plan || budget;
+    int64_t basis_points=plan && data ? (int64_t)s->used_pct*100:
+      budget && data ? (int64_t)s->spent_cents*10000/s->limit_cents:-1;
+    int64_t pct=basis_points<0 ? -1:(basis_points+50)/100;
+    const char *plan_caption=s->label[0] ? s->label:
+      s->has_window && s->window_seconds==604800 ? "WEEKLY":
+      s->has_window && s->window_seconds==86400 ? "DAILY":"PLAN";
+    char caption[48];
+    snprintf(caption,sizeof caption,"%s",plan_caption);
+#if !defined(TORGET_BOARD_175) && !defined(TORGET_BOARD_191_TOUCH)
+    if(plan && s->plan_name[0]) {
+      snprintf(caption,sizeof caption,"%s · %s",plan_caption,s->plan_name);
+      lv_point_t caption_size;
+      lv_text_get_size(&caption_size,caption,&plex_ui_21,2,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+      if(caption_size.x>380) snprintf(caption,sizeof caption,"%s",plan_caption);
+    }
+#endif
+    grok_visible(grok_page.est,plan && data && s->estimated);
+    grok_text(grok_page.caption,money ? grok_money_caption(s,budget):plan ? caption:bots ? "BOTS · TODAY":"GROK");
+    if (!data) snprintf(text,sizeof text,"–");
+    else if (percent) snprintf(text,sizeof text,"%lld%%",(long long)pct);
+    else if (money) grok_dollars(text,sizeof text,s->spent_cents,true);
+    else snprintf(text,sizeof text,"%ld",(long)s->active);
+    const lv_font_t *font=money && !percent ? &plex_money_118:&plex_num_118;
+    int spacing=0;
+#ifdef TORGET_BOARD_175
+    if(percent && data) text[strlen(text)-1]=0;
+#else
+    if(percent) { font=&plex_num_164; spacing=-9; }
+    lv_obj_set_y(grok_page.hero,105);
+    lv_obj_set_height(grok_page.hero,percent ? 150:130);
+#endif
+#ifdef TORGET_BOARD_191_TOUCH
+    /* Quota glyphs omit dollars/commas; the 118 px money font is too tall. */
+    font=money && !percent && s->spent_cents>=100000 ? &plex_money_35:&plex_quota_84;
+    spacing=percent ? -4:0;
+    lv_obj_set_y(grok_page.hero,VP_PERCENT_Y);
+    lv_obj_set_height(grok_page.hero,90);
+    bool currency=money && !percent && data && s->spent_cents<100000;
+    if(currency) memmove(text,text+1,strlen(text));
+    grok_visible(grok_page.currency,currency);
+    if(lv_obj_get_style_x(grok_page.hero,0)!=(currency ? 40:16)) lv_obj_set_x(grok_page.hero,currency ? 40:16);
+    if(lv_obj_get_style_width(grok_page.hero,0)!=(currency ? 242:266)) lv_obj_set_width(grok_page.hero,currency ? 242:266);
+#endif
+    lv_obj_set_style_text_letter_space(grok_page.hero,spacing,0);
+    lv_point_t size;
+    lv_text_get_size(&size,text,font,spacing,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+    if (size.x>
+#ifdef TORGET_BOARD_175
+        340
+#else
+        lv_obj_get_style_width(grok_page.hero,0)
+#endif
+        ) {
+      font=money && !percent ? &plex_money_35:percent ? &plex_stat_35:&plex_num_38;
+      spacing=0;
+      lv_obj_set_style_text_letter_space(grok_page.hero,spacing,0);
+      lv_text_get_size(&size,text,font,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+      if(size.x>
+#ifdef TORGET_BOARD_175
+          300
+#else
+          lv_obj_get_style_width(grok_page.hero,0)
+#endif
+          ) font=&plex_ui_21;
+    }
+    if (lv_obj_get_style_text_font(grok_page.hero,0)!=font) lv_obj_set_style_text_font(grok_page.hero,font,0);
+    grok_text(grok_page.hero,text);
+#ifdef TORGET_BOARD_175
+    grok_visible(grok_page.gauge.percent_unit,percent && data);
+    if(percent && data) {
+      lv_text_get_size(&size,text,font,spacing,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+      int x=(480-size.x-40)/2;
+      if(lv_obj_get_style_width(grok_page.hero,0)!=size.x) lv_obj_set_width(grok_page.hero,size.x);
+      if(lv_obj_get_style_x(grok_page.hero,0)!=x) lv_obj_set_x(grok_page.hero,x);
+      if(lv_obj_get_style_x(grok_page.gauge.percent_unit,0)!=x+size.x+3) lv_obj_set_x(grok_page.gauge.percent_unit,x+size.x+3);
+      int unit_y=VP_ROUND_PERCENT_Y+(font==&plex_num_118 ? 60:0);
+      if(lv_obj_get_style_y(grok_page.gauge.percent_unit,0)!=unit_y) lv_obj_set_y(grok_page.gauge.percent_unit,unit_y);
+    } else {
+      if(lv_obj_get_style_x(grok_page.hero,0)!=70) lv_obj_set_x(grok_page.hero,70);
+      if(lv_obj_get_style_width(grok_page.hero,0)!=340) lv_obj_set_width(grok_page.hero,340);
+    }
+#endif
+    int fill=basis_points<0 ? 0:basis_points>10000 ? 10000:(int)basis_points;
+    amount[0]=0;
+    if(money && data && budget) grok_dollars(amount,sizeof amount,s->limit_cents,false);
+    if (money && data && budget) {
+      snprintf(text,sizeof text,"LEFT OF %s",amount); grok_text(grok_page.left_caption,text);
+      grok_dollars(text,sizeof text,s->spent_cents<s->limit_cents ? s->limit_cents-s->spent_cents:0,false);
+    } else if (plan && data && s->has_plan_used && s->has_plan_limit) {
+      snprintf(text,sizeof text,"OF %ld",(long)s->plan_limit); grok_text(grok_page.left_caption,text);
+      snprintf(text,sizeof text,"%ld LEFT",(long)(s->plan_used<s->plan_limit ? s->plan_limit-s->plan_used:0));
+    } else if (bots && data) {
+      grok_text(grok_page.left_caption,"DONE TODAY"); snprintf(text,sizeof text,"%ld",(long)s->done_today);
+    } else {
+      grok_text(grok_page.left_caption,"LEFT");
+      if(plan && data) snprintf(text,sizeof text,"%ld%%",(long)(100-s->used_pct));
+      else snprintf(text,sizeof text,"–");
+    }
+    const lv_font_t *stat_font=money ? &plex_money_35:&plex_stat_35;
+    lv_text_get_size(&size,text,stat_font,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+    if(size.x>210) stat_font=&plex_ui_21;
+#ifdef TORGET_BOARD_175
+    if(size.x>128) stat_font=&plex_ui_21;
+#endif
+#ifdef TORGET_BOARD_191_TOUCH
+    stat_font=&plex_ui_14;
+    if(plan && data && !(s->has_plan_used && s->has_plan_limit)) snprintf(text,sizeof text,"%ld%% LEFT",(long)(100-s->used_pct));
+    grok_visible(grok_page.left,data);
+    grok_visible(grok_page.reset,data);
+#endif
+    if(lv_obj_get_style_text_font(grok_page.left,0)!=stat_font) lv_obj_set_style_text_font(grok_page.left,stat_font,0);
+    grok_text(grok_page.left,text);
+    grok_text(grok_page.reset_caption,"TO RESET");
+    text[0]=0;
+    if (budget && data) {
+      char spent[32]; grok_dollars(spent,sizeof spent,s->spent_cents,true);
+      snprintf(text,sizeof text,"%s of %s",spent,amount);
+    }
+    if(plan && data && s->has_plan_used && s->has_plan_limit)
+      snprintf(text,sizeof text,"%ld OF %ld USED",(long)s->plan_used,(long)s->plan_limit);
+    grok_visible(grok_page.sub,data && (budget || (plan && s->has_plan_used && s->has_plan_limit)));
+    grok_text(grok_page.sub,text);
+    quota_page *g=&grok_page.gauge;
+#ifdef TORGET_BOARD_175
+    usage_today_bar_view bar={0}; bar.has_total=pct>=0; bar.total_px=fill*360/10000;
+    if (pace_changed || memcmp(&g->round_bar,&bar,sizeof bar)) { g->round_bar=bar; lv_obj_invalidate(g->track); }
+#else
+    grok_visible(g->track,pct>=0);
+    int width=fill*VP_CONTENT_W/10000;
+    if (lv_obj_get_style_width(g->baseline_fill,0)!=width) lv_obj_set_width(g->baseline_fill,width);
+    int window=grok_window_seconds(s);
+    grok_visible(g->marker,pct>=0 && s->has_reset && window>0);
+    int pace=grok_pace(s->reset_seconds,window,VP_CONTENT_W);
+    if (lv_obj_get_style_x(g->marker,0)!=VP_SAFE_X+pace) lv_obj_set_x(g->marker,VP_SAFE_X+pace);
+#endif
+    grok_page.has_data=data;
+  }
+  unsigned count=s->enabled ? s->bot_count:0,waiting=0;
+  int priority=-1;
+  for(unsigned i=0;i<count;i++) if(!strcmp(s->bots[i].state,"waiting")) {waiting++; if(priority<0) priority=(int)i;}
+  const char *waiting_suffix=waiting && waiting==count && s->active>(int32_t)count ? "+":"";
+  if(!s->enabled) snprintf(text,sizeof text,"–");
+  else if(waiting) snprintf(text,sizeof text,"%u%s NEEDS YOU",waiting,waiting_suffix);
+  else if(s->enabled && s->active) snprintf(text,sizeof text,"%ld BOTS ACTIVE",(long)s->active);
+  else snprintf(text,sizeof text,"NO BOTS");
+#ifndef TORGET_BOARD_175
+  grok_text(grok_page.context,text);
+#endif
+  lv_color_t context_color=waiting ? COL_STAR:COL_META;
+  if(!lv_color_eq(lv_obj_get_style_text_color(grok_page.context,0),context_color)) lv_obj_set_style_text_color(grok_page.context,context_color,0);
+  unsigned max_rows=3;
+#ifdef TORGET_BOARD_175
+  max_rows=0;
+  bool shown_plan=!strcmp(grok_page.shown.source,"plan");
+  grok_visible(grok_page.bot_counts,shown_plan && grok_page.has_data);
+  if(!s->enabled) snprintf(text,sizeof text,"– ACTIVE · – NEEDS YOU");
+  else snprintf(text,sizeof text,"%ld ACTIVE · %u%s NEEDS YOU",(long)s->active,waiting,waiting_suffix);
+  grok_text(grok_page.bot_counts,text);
+  if(shown_plan) {
+    lv_obj_set_style_text_font(grok_page.reset,&plex_stat_35,0);
+    lv_obj_set_style_text_color(grok_page.reset,COL_WHITE,0);
+  } else {
+    grok_text(grok_page.left_caption,"ACTIVE");
+    if(s->enabled && strcmp(s->source,"none")) snprintf(text,sizeof text,"%ld",(long)s->active);
+    else snprintf(text,sizeof text,"–");
+    grok_text(grok_page.left,text);
+    const lv_font_t *reset_font=count && !waiting_suffix[0] ? &plex_round_32:&plex_stat_35;
+    if(lv_obj_get_style_text_font(grok_page.reset,0)!=reset_font) lv_obj_set_style_text_font(grok_page.reset,reset_font,0);
+  }
+  if(!count) {
+    grok_text(grok_page.reset_caption,"TO RESET");
+    grok_text(grok_page.context,s->enabled ? "NO BOTS":"–");
+    if(!s->enabled && !shown_plan) {
+      grok_text(grok_page.reset_caption,"NEEDS YOU");
+      grok_text(grok_page.reset,"–");
+    }
+    if(!lv_color_eq(lv_obj_get_style_text_color(grok_page.reset,0),COL_WHITE)) lv_obj_set_style_text_color(grok_page.reset,COL_WHITE,0);
+  }
+  if(count) {
+    if(!shown_plan) {
+      grok_text(grok_page.reset_caption,"NEEDS YOU"); snprintf(text,sizeof text,"%u%s",waiting,waiting_suffix); grok_text(grok_page.reset,text);
+      lv_color_t reset_color=waiting ? COL_STAR:COL_WHITE;
+      if(!lv_color_eq(lv_obj_get_style_text_color(grok_page.reset,0),reset_color)) lv_obj_set_style_text_color(grok_page.reset,reset_color,0);
+    }
+    lv_color_t color; if(priority<0) priority=0;
+    snprintf(text,sizeof text,"%s · %s",s->bots[priority].name,grok_state(&s->bots[priority],&color));
+    grok_text(grok_page.context,text);
+  }
+#else
+  grok_visible(grok_page.empty,s->enabled && !count);
+#endif
+  for(unsigned i=0;i<4;i++) {
+    bool show=i<count && i<max_rows;
+    grok_visible(grok_page.dot[i],show); grok_visible(grok_page.name[i],show); grok_visible(grok_page.state[i],show);
+#if defined(TORGET_BOARD_175)
+    grok_visible(grok_page.activity[i],false);
+#else
+    grok_visible(grok_page.activity[i],show);
+#endif
+    if(!show) continue;
+    const tk_grok_bot *bot=&s->bots[i]; lv_color_t color;
+    const char *word=grok_state(bot,&color);
+    grok_text(grok_page.name[i],bot->name); grok_text(grok_page.activity[i],bot->activity); grok_text(grok_page.state[i],word);
+    if(!lv_color_eq(lv_obj_get_style_text_color(grok_page.state[i],0),color)) lv_obj_set_style_text_color(grok_page.state[i],color,0);
+    if(!lv_color_eq(lv_obj_get_style_bg_color(grok_page.dot[i],0),color)) lv_obj_set_style_bg_color(grok_page.dot[i],color,0);
+  }
+  refresh_grok_age(now_us);
+}
+#endif
 
 static void create_forecast_row(lv_obj_t *tile, forecast_row *row,
                                 int y, usage_provider provider) {
@@ -1876,6 +2446,9 @@ void usage_screen_create(lv_obj_t *root) {
   if (tk_labs_active(TK_LABS_GITHUB)) create_github_page();
   if (tk_labs_active(TK_LABS_VALUE)) create_value_page();
   if (tk_labs_active(TK_LABS_LOVABLE)) create_lovable_page();
+#if TK_GROK_SCREEN_ENABLED
+  create_grok_page();
+#endif
 #if TK_OPENPULSE_AVAILABLE
   if (tk_labs_active(TK_LABS_OPENPULSE)) {
     openpulse_app.create(new_tile(VIEW_OPENPULSE));
@@ -1967,6 +2540,13 @@ void usage_screen_apply_github(const tk_github_status *status) {
   }
 }
 
+void usage_screen_apply_grok(const tk_grok_status *status, int64_t now_us) {
+#if TK_GROK_SCREEN_ENABLED
+  if (status && grok_page.tile) apply_grok_page(status, now_us);
+#else
+  (void)status; (void)now_us;
+#endif
+}
 void usage_screen_apply_lovable(const tk_lovable_status *status,
                                 int64_t now_us) {
   if (!status || !ui.lovable.tile) return;
@@ -2005,6 +2585,9 @@ void usage_screen_tick(int64_t now_us) {
   for (int i = 0; i < 2; i++) refresh_tracker_header(&ui.trackers[i], now_us);
   tk_agent_monitor_tick(now_us);
   refresh_lovable_age(now_us);
+#if TK_GROK_SCREEN_ENABLED
+  refresh_grok_age(now_us);
+#endif
   if (tk_labs_active(TK_LABS_STAR_POPUP)) tk_project_star_popup_tick(now_us);
 }
 

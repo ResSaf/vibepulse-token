@@ -44,6 +44,7 @@ void openpulse_net_start(void) {}
 #include "agent_status_parse.h"
 #include "github_status_parse.h"
 #include "lovable_status_parse.h"
+#include "grok_status_parse.h"
 #include "max_tracker_parse.h"
 #include "boot_screen.h"
 #include "ota_ui.h"
@@ -470,6 +471,19 @@ static void apply_lovable_file(const char *file) {
     printf("lovable: %s (%s)\n", file, status.has_data ? "data" : "waiting");
   } else {
     printf("lovable: %s avvisad\n", file);
+  }
+  free(json);
+}
+static void apply_grok_file(const char *file) {
+  size_t len = 0;
+  char *json = read_fixture(file, &len);
+  tk_grok_status status;
+  if (json && tk_grok_status_parse(json, len, &status)) {
+    tokens_apply_grok(&status);
+    printf("grok: %s (%s)\n", file, status.enabled ? "data" : "waiting");
+  } else {
+    printf("grok: %s avvisad\n", file);
+    capture_failures++;
   }
   free(json);
 }
@@ -1770,9 +1784,199 @@ static int run_vibepulse_needs_you_render_qa(void) {
   return 0;
 }
 
-/* Lovable page captures. Its own mode, run with LABS bit 32 set
- * (TORGET_LABS_MASK=32 or more), so the pinned default frames and their pager
- * rows stay byte-identical to a build without the page. */
+/* QA inspects shared LVGL labels, not a second formatter. */
+static lv_obj_t *grok_find_label(lv_obj_t *root, const char *text) {
+  if(lv_obj_check_type(root,&lv_label_class) && !strcmp(lv_label_get_text(root),text)) return root;
+  for(uint32_t i=0;i<lv_obj_get_child_count(root);i++) {
+    lv_obj_t *found=grok_find_label(lv_obj_get_child(root,i),text);
+    if(found) return found;
+  }
+  return NULL;
+}
+static void grok_check_label(const char *text, bool fits) {
+  lv_obj_t *obj=grok_find_label(lv_screen_active(),text);
+  bool ok=obj!=NULL;
+  if(obj && fits) {
+    const lv_font_t *font=lv_obj_get_style_text_font(obj,0);
+    lv_point_t size;
+    lv_text_get_size(&size,text,font,lv_obj_get_style_text_letter_space(obj,0),0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+    ok=size.x<=lv_obj_get_width(obj) && font->line_height<=lv_obj_get_height(obj);
+    if(strchr(text,'+')) {
+      lv_font_glyph_dsc_t glyph;
+      ok=ok && lv_font_get_glyph_dsc(font,&glyph,'+',0);
+    }
+    if(text[0]=='$') {
+      lv_font_glyph_dsc_t glyph;
+      ok=ok && lv_font_get_glyph_dsc(font,&glyph,'$',0) &&
+        lv_font_get_glyph_dsc(font,&glyph,',',0) && lv_font_get_glyph_dsc(font,&glyph,'.',0);
+    }
+  }
+  if(!ok) { fprintf(stderr,"grok: missing or clipped QA label: %s\n",text); capture_failures++; }
+}
+
+/* Grok build-time opt-in captures; no persisted Labs choice. */
+static int run_vibepulse_grok_qa(void) {
+  capture_failures = 0;
+  torget_app_show(SIM_APP_VIBEPULSE);
+  apply_agent_file("agent-status-idle.json");
+  feed_tokens_file("tokens.json");
+  if (tk_labs_view_position(VIEW_GROK) < 0) {
+    fprintf(stderr,"grok: page is off -- configure -DTORGET_GROK=ON\n");
+    return 1;
+  }
+  sim_wifi_signal_bars=3;
+  torget_wifi_status_set_mode(TG_WIFI_STATUS_NORMAL);
+  torget_wifi_status_foreground();
+  /* "live" is the combined usage + bots frame used for POC renders. */
+  const char *states[]={"empty","xai","openrouter","plan","plan-est","plan-bots","bots","stale","disabled","live"};
+  tokens_show_view(VIEW_GROK);
+  lv_refr_now(NULL);
+  dump_frame("vibepulse-grok-startup");
+#ifdef TORGET_BOARD_175
+  /* Exercise initialization before any stale-to-fresh transition can mask it. */
+  apply_grok_file("grok-live.json");
+  lv_refr_now(NULL);
+  dump_frame("vibepulse-grok-first-live");
+#endif
+  for (unsigned i=0;i<sizeof states/sizeof states[0];i++) {
+    char file[64], frame[64];
+    snprintf(file,sizeof file,"grok-%s.json",states[i]);
+    snprintf(frame,sizeof frame,"vibepulse-grok-%s",states[i]);
+    apply_grok_file(file);
+    lv_refr_now(NULL);
+    dump_frame(frame);
+  }
+  /* Host gone: 91 s without a read dims the bot rows and says CACHED. */
+  usage_screen_tick(torget_now_us() + 91000000LL);
+  lv_refr_now(NULL);
+  dump_frame("vibepulse-grok-offline");
+  /* Then a payload without numbers: the retained spend keeps its own label. */
+  apply_grok_file("grok-empty.json");
+  lv_refr_now(NULL);
+  dump_frame("vibepulse-grok-retained");
+  apply_grok_file("grok-live.json");
+  lv_refr_now(NULL);
+  dump_frame("vibepulse-grok-restored");
+  /* Retained bot/plan readings must carry CACHED, even without source age. */
+  const char *retained_sources[]={"bots","plan","plan-unknown-age"};
+  for(unsigned i=0;i<3;i++) {
+    size_t len=0;
+    char *json=read_fixture(i==0 ? "grok-bots.json":"grok-plan.json",&len);
+    tk_grok_status status;
+    if(!json || !tk_grok_status_parse(json,len,&status)) { free(json); return 1; }
+    free(json);
+    if(i==2) status.has_age=false;
+    tokens_apply_grok(&status);
+    lv_refr_now(NULL);
+    char frame[80];
+    snprintf(frame,sizeof frame,"vibepulse-grok-%s-live",retained_sources[i]);
+    dump_frame(frame);
+    apply_grok_file("grok-empty.json");
+    lv_refr_now(NULL);
+    snprintf(frame,sizeof frame,"vibepulse-grok-%s-retained",retained_sources[i]);
+    dump_frame(frame);
+  }
+
+  /* Expire the shown window while its feed is still fresh (<90 s). */
+  size_t plan_len=0;
+  char *plan_json=read_fixture("grok-plan.json",&plan_len);
+  tk_grok_status short_window;
+  if(!plan_json || !tk_grok_status_parse(plan_json,plan_len,&short_window)) {
+    free(plan_json); return 1;
+  }
+  free(plan_json);
+  short_window.reset_seconds=10;
+  tokens_apply_grok(&short_window);
+  usage_screen_tick(torget_now_us() + 11000000LL);
+  lv_refr_now(NULL);
+  dump_frame("vibepulse-grok-window-expired");
+  grok_check_label("PLAN · GROK.COM · 2 MIN · CACHED",false);
+
+  tk_grok_status wide={.enabled=true,.has_spent=true,.spent_cents=INT32_MAX,
+    .has_limit=true,.limit_cents=INT32_MAX,.has_reset=true,.reset_seconds=1137600};
+  snprintf(wide.source,sizeof wide.source,"openrouter");
+  tokens_apply_grok(&wide); lv_refr_now(NULL); dump_frame("vibepulse-grok-wide");
+  grok_check_label("$21,474,836.47 of $21,474,836",false);
+  wide.spent_cents=4718;
+  tokens_apply_grok(&wide); lv_refr_now(NULL); dump_frame("vibepulse-grok-wide-left");
+  wide.spent_cents=INT32_MAX; wide.limit_cents=1;
+  tokens_apply_grok(&wide); lv_refr_now(NULL); dump_frame("vibepulse-grok-huge-percent");
+  wide.spent_cents=4718; wide.has_limit=false;
+  tokens_apply_grok(&wide); lv_refr_now(NULL); dump_frame("vibepulse-grok-unlimited");
+  wide.has_limit=true; wide.limit_cents=0;
+  tokens_apply_grok(&wide); lv_refr_now(NULL); dump_frame("vibepulse-grok-zero-limit");
+  wide.has_limit=false;
+  wide.spent_cents=123456;
+  tokens_apply_grok(&wide); lv_refr_now(NULL); dump_frame("vibepulse-grok-dollar-thousands");
+  grok_check_label("$1,234.56",true);
+  wide.spent_cents=123456789;
+  tokens_apply_grok(&wide); lv_refr_now(NULL); dump_frame("vibepulse-grok-dollar-millions");
+  grok_check_label("$1,234,567.89",true);
+  wide.spent_cents=INT32_MAX;
+  tokens_apply_grok(&wide); lv_refr_now(NULL);
+  grok_check_label("$21,474,836.47",true);
+  snprintf(wide.source,sizeof wide.source,"xai");
+  tokens_apply_grok(&wide); lv_refr_now(NULL);
+#ifdef TORGET_BOARD_191_TOUCH
+  grok_check_label("POSTPAID",true);
+#else
+  grok_check_label("POSTPAID · MONTH",true);
+#endif
+  wide.has_limit=true; wide.limit_cents=INT32_MAX;
+  tokens_apply_grok(&wide); lv_refr_now(NULL);
+  grok_check_label("POSTPAID LIMIT",true);
+  wide.active=7; wide.bot_count=4;
+  for(unsigned i=0;i<4;i++) {
+    snprintf(wide.bots[i].name,sizeof wide.bots[i].name,"Bot %u",i);
+    snprintf(wide.bots[i].state,sizeof wide.bots[i].state,"waiting");
+  }
+  tokens_apply_grok(&wide); lv_refr_now(NULL);
+#ifdef TORGET_BOARD_175
+  grok_check_label("4+",true);
+#else
+  grok_check_label("4+ NEEDS YOU",true);
+#endif
+#ifdef TORGET_BOARD_175
+  wide.stale=true;
+  tokens_apply_grok(&wide); lv_refr_now(NULL);
+  lv_obj_t *waiting=grok_find_label(lv_screen_active(),"4+");
+  if(!waiting || lv_obj_get_style_text_opa(waiting,0)!=LV_OPA_COVER) {
+    fprintf(stderr,"grok: stale reading dimmed live waiting count\n"); capture_failures++;
+  }
+  usage_screen_tick(torget_now_us()+91000000LL); lv_refr_now(NULL);
+  if(waiting && lv_obj_get_style_text_opa(waiting,0)!=LV_OPA_50) {
+    fprintf(stderr,"grok: feed outage did not dim waiting count\n"); capture_failures++;
+  }
+  wide.stale=false;
+#endif
+  wide.active=4;
+  tokens_apply_grok(&wide); lv_refr_now(NULL);
+#ifdef TORGET_BOARD_175
+  grok_check_label("4",true);
+#else
+  grok_check_label("4 NEEDS YOU",true);
+#endif
+  wide.active=7;
+  snprintf(wide.bots[3].state,sizeof wide.bots[3].state,"working");
+  tokens_apply_grok(&wide); lv_refr_now(NULL);
+#ifdef TORGET_BOARD_175
+  grok_check_label("3",true);
+#else
+  grok_check_label("3 NEEDS YOU",true);
+#endif
+  snprintf(wide.source,sizeof wide.source,"plan");
+  wide.has_used=true; wide.used_pct=42;
+  snprintf(wide.bots[3].state,sizeof wide.bots[3].state,"waiting");
+  tokens_apply_grok(&wide); lv_refr_now(NULL);
+#ifdef TORGET_BOARD_175
+  grok_check_label("7 ACTIVE · 4+ NEEDS YOU",true);
+#endif
+  apply_grok_file("grok-plan-nowindow.json");
+  lv_refr_now(NULL); dump_frame("vibepulse-grok-plan-nowindow");
+  return capture_failures ? 1:0;
+}
+
+/* Lovable captures require Labs bit 32; keep their default build unchanged. */
 static int run_vibepulse_lovable_qa(void) {
   capture_failures = 0;
   torget_app_show(SIM_APP_VIBEPULSE);
@@ -2055,6 +2259,8 @@ int main(int argc, char **argv) {
     return run_round_quota_qa();
 #endif
 
+  if (argc == 2 && strcmp(argv[1], "--vibepulse-grok-qa") == 0)
+    return run_vibepulse_grok_qa();
   if (argc == 2 && strcmp(argv[1], "--vibepulse-lovable-qa") == 0)
     return run_vibepulse_lovable_qa();
 #if TK_OPENPULSE_AVAILABLE

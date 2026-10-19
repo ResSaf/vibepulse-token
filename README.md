@@ -24,13 +24,18 @@ current across ordinary internet WiFi. Every cloud feature is off by default;
 only the encrypted interaction/status relay adds the pinned Python
 `cryptography` dependency.
 
+A build-time opt-in [Grok page](docs/grok-pulse.md#panel-page-build-time-opt-in)
+defaults to subscription plan percentage, with EST for estimates and local bot activity.
+Optional xAI/OpenRouter billing sources show dollars when no positive budget
+limit is available.
+
 An optional [Lovable credits page](docs/lovable-pulse.md) is available in Labs.
 The current MCP response omits balances despite the documentation; an opt-in
 local Chrome extension can read the visible balance while a Lovable project is
 open. Setup and freshness limits are documented in the linked guide.
 
-**OpenRouter spend and budgets** are also available as an optional Labs page
-in `main`. OpenPulse shows API-key spend, a monthly display budget, remaining
+**OpenRouter spend and budgets** are also available as an optional Labs page.
+OpenPulse shows API-key spend, a monthly display budget, remaining
 key allowance and optional account credits. A separate Mac service keeps API
 keys in Keychain and sends only summaries to the panel.
 [See the OpenRouter page and setup](#openrouter-spend-and-budget).
@@ -70,8 +75,8 @@ Both answers already exist, buried in a terminal you're not looking at.
 VibePulse moves them onto a screen you can't miss: one glance from across
 the room, no window to switch to, no menu bar to squint at.
 
-> **Status:** latest release v1.3.0. OpenRouter is available in `main` as an
-> optional source-build preview and is not included in that release.
+> **Status:** latest release v1.4.0 includes the optional Grok preview,
+> OpenRouter source-build preview and 1.8 V2 development profile.
 > The core shelf-screen loop is real and physically
 > exercised on macOS and Windows: see quota, see an agent waiting, and answer
 > a supported prompt on the glass. The Windows core, physical answer loop and
@@ -112,7 +117,7 @@ Codex. You do not need to read this whole page:
 
 ## OpenRouter spend and budget
 
-**OpenPulse is now in `main`**, adding an optional **OPENROUTER** page to
+**OpenPulse is included in v1.4.0**, adding an optional **OPENROUTER** page to
 VibePulse Labs. The spend page shows daily, weekly and monthly spend for the
 selected API key, compared with a monthly display budget you choose. The
 details page shows remaining API-key allowance and optional account credits;
@@ -127,7 +132,7 @@ BYOK usage stays separate. The display budget is a reminder, not a provider cap.
 
 *Native 466 × 466 shared LVGL captures with synthetic demo values.*
 
-Build compatible firmware from `main` with `-DTORGET_OPENPULSE=ON`, then
+Build compatible firmware from the release source with `-DTORGET_OPENPULSE=ON`, then
 enable **OPENROUTER** under **SETTINGS → LABS → MORE → MORE** and tap
 **RESTART NOW**. OpenRouter is off by default. Tap the bottom page indicator
 to switch between spend and details, or the key name to cycle configured keys.
@@ -149,33 +154,49 @@ The round **1.75** has an [owner-confirmed physical checkpoint](docs/openpulse/p
 for upright live readings and the bottom page switch. Square **2.16** has native
 simulator checks and a CI firmware build; physical OpenRouter acceptance is
 pending. The other three display profiles cannot enable OpenRouter yet.
-This remains a macOS source-build preview, outside the **v1.3.0** release.
+This remains a macOS source-build preview, included in **v1.4.0**.
 
 ![OpenRouter on the owner's round display in its pink enclosure](docs/img/openpulse/round-photo.jpg)
 
 *Owner photograph, 29 September 2026. Full touch-grid, swipe/menu and stress
 acceptance remain pending; see the linked checkpoint for the tested build.*
 
-## Latest release: v1.3.0
+## Grok quota and bot activity (build-time preview)
 
-Lovable joins the optional Labs pages. An experimental Chrome extension reads
-explicitly labelled credits from the billing page and sends them through your
-local tokenserver. The [setup guide](docs/lovable-pulse.md) covers installation,
-workspace selection, freshness, removal and switching to the official API later.
-Lovable's MCP documentation describes credits, but the response we checked did
-not include them. Browser automation remains experimental; a real one-time
-reading reached the round display, while automatic refresh still needs confirmation.
+The opt-in **GROK** page uses VibePulse's quota header, gauge and stat widgets.
+The subscription plan is the default source; the hero shows percent of the plan.
+**EST** marks estimates; copied readings say **GROK.COM** with their age.
+There is no public usage API for Grok subscriptions or Grok Bot.
+xAI and OpenRouter are optional secondary sources showing percent of budget
+with dollars below, or a dollar hero without a positive limit.
+Square and rectangular profiles show up to three bot rows; round 1.75 uses the
+quota edge ring and one priority bot line. Sources and cached readings remain
+explicit. Enable `-DTORGET_GROK=ON` and the host's `--grok` option; both are off
+by default. [Setup and source limits](docs/grok-pulse.md#panel-page-build-time-opt-in).
 
-Labs now lets you hide Claude Code or Codex quota pages and apply saved choices
-with **RESTART NOW**. The existing quota designs stay the same. Source and native
-render checks cover all 256 combinations, including every page off. A release
-tag is not a physical flash of every final image; board-specific touch and
-installation checks remain separate.
+![Grok plan percentage and bot activity, native 480 × 480 simulator capture](docs/img/grok-216-plan.png)
+![Grok bot activity, native 600 × 450 simulator capture](docs/img/grok-241-bots.png)
 
-[Illustrated v1.3.0 notes](docs/releases/2026-09-25-lovable-and-labs.md)
+*Shared LVGL captures with synthetic readings. Grok has no physical panel acceptance.*
+
+## Latest release: v1.4.0
+
+The optional **GROK** page adds subscription plan observations, clearly marked
+estimates and local bot activity on all five board profiles. It requires both
+the firmware build option and host opt-in; it has simulator and firmware-build
+coverage, with physical panel acceptance still pending.
+
+**OPENROUTER** joins Labs through the separate macOS OpenPulse service on round
+1.75 and square 2.16. The release also includes the USB-only **1.8 V2**
+development profile. Existing board and host verification limits still apply;
+see the illustrated notes for the source, setup and physical evidence.
+A release tag does not perform a physical flash of every final image;
+board-specific installation and touch acceptance remain separate.
+
+[Illustrated v1.4.0 notes](docs/releases/2026-10-19-grok-openrouter-and-18-v2.md)
 · [Full changelog](CHANGELOG.md)
-· [Compare v1.2.0...v1.3.0](https://github.com/niclasvestlund-YT/vibepulse/compare/v1.2.0...v1.3.0)
-· [Four-board v1.2.0 release](docs/releases/2026-09-24-four-amoled-shapes.md)
+· [Compare v1.3.0...v1.4.0](https://github.com/niclasvestlund-YT/vibepulse/compare/v1.3.0...v1.4.0)
+· [Previous v1.3.0 release](docs/releases/2026-09-25-lovable-and-labs.md)
 
 Contributing or validating another host? Read
 [CONTRIBUTING.md](CONTRIBUTING.md), the
@@ -547,7 +568,8 @@ The support status below reflects our own verification of each model.
 | [Waveshare ESP32-S3-Touch-AMOLED-1.75](https://www.waveshare.com/esp32-s3-touch-amoled-1.75.htm?&aff_id=179337) (affiliate), marking **1.75** only | 466×466 round AMOLED; PCB revision unknown | **USB-installed round quota profile in current source.** A real unit boots, joins Wi-Fi and displays Codex usage, USED TODAY and reset countdown in [owner photographs](docs/superpowers/reviews/2026-09-24-waveshare-175-round.md). [Bring-up guide](docs/waveshare-175-preview.md). Needs You decisions remain on the computer and OTA is disabled in current source; use USB updates. Fixed USB-down orientation, touch and the latest portal scan still need final on-unit checks; automatic rotation is unverified. |
 | [Waveshare ESP32-S3-Touch-AMOLED-1.8](https://www.waveshare.com/esp32-s3-touch-amoled-1.8.htm?&aff_id=179337) (affiliate), **V2 only** | 368×448 portrait CO5300 AMOLED, CST820 touch; BOOT opens settings | **USB-only development profile.** Owner reports display, touch, Wi-Fi/data path and settings working on one unit. [Install guide](docs/waveshare-amoled-18-v2.md) · [physical review](docs/superpowers/reviews/2026-09-25-waveshare-amoled-18-v2-physical.md). V1, OTA, Windows, audio, IMU, RTC, battery and microSD are not verified. Four-corner touch and transform-memory stress remain unverified. iPhone Wi-Fi onboarding still needs UX work. |
 
-The v1.2.0 tag includes the 2.41, 1.91 and 1.75 ports. The 1.8 V2 profile requires current source. Check the exact model and explicitly
+The v1.2.0 tag includes the 2.41, 1.91 and 1.75 ports; v1.4.0 also includes the
+1.8 V2 development profile. Check the exact model and explicitly
 select `waveshare_241_v2`, `waveshare_191_touch`, `waveshare_175` or `waveshare_18_v2`;
 firmware images are board-specific.
 More boards are added after physical verification, following
@@ -798,6 +820,25 @@ removal and the round display's BOOT/Labs controls. No MCP login is needed for
 balance in `get_workspace`, but the authenticated response checked on
 2026-09-24 omitted it. Source modes `auto` and `mcp` allow a later switch to the
 official API without changing the display contract.
+
+## Grok usage and bot activity (experimental)
+
+The default-off **GROK** page defaults to subscription plan percentage.
+**EST** marks estimates; copied readings say **GROK.COM** with their age.
+There is no public usage API for Grok subscriptions or Grok Bot. Optional
+xAI/OpenRouter secondary sources show percent of budget with dollars below
+(a dollar hero without a positive limit), alongside bot activity. Source and freshness stay visible; missing values
+show dashes, and unavailable updates retain the last real reading. Waiting
+bots show **NEEDS YOU**, without an approval action.
+
+![Grok plan percentage: native 480×480 simulator example](docs/img/grok-216-plan.png)
+
+![Grok bots: native 600×450 simulator example](docs/img/grok-241-bots.png)
+
+Enable firmware with `-D TORGET_GROK=ON` or `TK_GROK_SCREEN_ENABLED 1` in
+`secrets.h`, and enable the host separately with `--grok`. This page is not a
+Labs switch. All five board profiles have simulator layouts; none has physical
+Grok verification. See [Grok setup and simulator commands](docs/grok-pulse.md).
 
 ## One button, one menu
 

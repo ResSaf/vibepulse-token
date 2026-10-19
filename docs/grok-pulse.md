@@ -1,8 +1,8 @@
 # Grok Pulse (host preview)
 
 An optional, default-off tokenserver source for Grok usage and bot activity.
-This part adds the **host endpoints**; the panel page is a separate,
-build-time opt-in (see the firmware section once merged). macOS and Windows use the same stdlib implementation. Automated tests
+The host endpoints and panel page are separate, default-off options
+(see [Panel page](#panel-page-build-time-opt-in)). macOS and Windows use the same stdlib implementation. Automated tests
 are separate from real-host and physical-panel verification.
 
 Enable with `--grok` (or `VIBEPULSE_GROK=1`) on your existing tokenserver
@@ -89,7 +89,9 @@ never filled with invented zeroes. Bot activity alone is not a quota reading.
 
 ### xAI API (optional secondary source)
 
-This measures console.x.ai API billing, not subscription usage. It uses the
+This measures the postpaid invoice amount due this billing month, not subscription usage.
+Usage paid from prepaid credits is excluded. The host label is `XAI POSTPAID`;
+the panel captions are POSTPAID · MONTH and POSTPAID LIMIT (POSTPAID where space is limited). It uses the
 [Management API invoice preview](https://docs.x.ai/developers/rest-api-reference/management/billing).
 
 ### xAI Management key
@@ -117,6 +119,8 @@ positive postpaid `effectiveSpendingLimit` only. The label is `XAI POSTPAID`:
 `spentCents` is the postpaid invoice amount due for the current billing month,
 paired with that postpaid spending limit. Usage paid from prepaid credits is
 not included, so the amount due stays zero while prepaid credits cover usage.
+Credits are reported in `/api/grok` as `prepaidCents` for host consumers and
+are not drawn on the panel page.
 No limit is inferred from a plan.
 
 ### OpenRouter (optional secondary source)
@@ -147,8 +151,9 @@ Readings with a daily, weekly or monthly window also carry `windowSeconds`, so
 the panel can name the window and place its pace marker; lifetime budgets and
 never-resetting limits omit it. This is per-key spend, not account-wide spend. Credits are optional
 account-wide remaining credits (`total_credits - total_usage`), requiring
-non-negative operands and a non-negative balance, shown only with
-the management key. A credits failure omits credits and marks the reading
+non-negative operands and a non-negative balance, reported in `/api/grok` as
+`prepaidCents` for host consumers only with the management key. They are not
+drawn on the panel page. A credits failure omits credits and marks the reading
 stale. Once a cached accounting window reaches its reset instant, its reading
 is stale with resetSeconds zero until a new poll succeeds. Unknown countdowns and missing numbers are omitted. All monetary values
 are rounded to USD cents. No limit is inferred from a plan.
@@ -207,3 +212,88 @@ Grok data is never sent to VibePulse relays. Management keys stay on the host
 and are never returned or logged; only the corresponding provider billing requests carry its key.
 Bot names/activity and plan labels are visible to LAN clients, so avoid
 sensitive task descriptions. Neither prompts nor chat history are collected.
+
+## Panel page (build-time opt-in)
+
+The optional **GROK** page defaults to the subscription plan. Its hero is
+percent of the plan; **EST** marks a count or bot-task estimate. Copied readings
+show **PLAN · GROK.COM** with their age; estimates show **PLAN · EST** with age
+or **PLAN · EST FROM BOTS** when estimated from current bot tasks. There is no
+public usage API for Grok subscriptions or Grok Bot; these are observations or
+estimates, never live usage measurements. Counts show used and remaining values
+when provided, and the reset counts down locally. Optional secondary xAI and
+OpenRouter sources show percent of budget with spent and limit dollars below,
+or a dollar hero without a positive limit. Dollar heroes and spent amounts retain
+cents even above $1,000; secondary limit/remaining amounts keep their compact
+format. Bot activity remains visible. Unknown
+numbers show a dash; a later unavailable reading retains the last real value.
+Stale values dim. If the panel gets no successful `/api/grok` read for 90
+seconds, the bot rows dim and the provenance says `CACHED` (or `NO
+CONNECTION`), so old WORKING/NEEDS YOU states never look live. A retained
+number that the latest payload no longer carries keeps its own source label
+and is shown dimmed. Plan resets count down locally. Bot states include
+WORKING, NEEDS YOU, DONE, IDLE and ERROR; this page cannot approve actions.
+Aggregate ACTIVE counts include both working and waiting bots, even when the
+host truncates the displayed bot rows. NEEDS YOU shows `N+` when every
+transmitted row is waiting and ACTIVE exceeds the row count; more bots may be waiting.
+
+Enable `#define TK_GROK_SCREEN_ENABLED 1` in `secrets.h`, or configure firmware
+with `-D TORGET_GROK=ON`. The default is **0**. An optional `TK_GROK_URL`
+can name the LAN `/api/grok` endpoint; otherwise service discovery is used.
+The computer must separately enable `--grok`. This is a build option, **not a
+Labs switch**, and does not change saved Labs settings. Polling starts after
+30 seconds, repeats every 15 seconds and backs off to two minutes on failure.
+
+| Board | Composition |
+| --- | --- |
+| `waveshare_216` | 480×480, quota bar and two stats above up to three bot rows |
+| `waveshare_241_v2` | 600×450, centred 480 composition |
+| `waveshare_18_v2` | 368×448, platform-scaled 480 composition |
+| `waveshare_175` | 466×466 round, shared edge ring, centred hero/stats and one priority bot line |
+| `waveshare_191_touch` | 536×240, 480×240 viewport with metric left and up to three compact bot rows right |
+
+Render each profile with the actual `torget-sim` binary:
+
+```sh
+cmake -S sim -B sim/build-grok -G Ninja -DTORGET_BOARD=<board> -DTORGET_GROK=ON
+ninja -C sim/build-grok
+SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./sim/build-grok/torget-sim --vibepulse-grok-qa
+```
+
+On a desktop, the SDL environment variables can be omitted. Offline builds can add
+`-DFETCHCONTENT_SOURCE_DIR_LVGL=/path/to/cached/lvgl-src` to CMake.
+The fixtures produce `/tmp/torget-vibepulse-grok-<state>.bmp` for
+`startup` (before any Grok payload), `empty`, `xai`, `openrouter`, `plan`, `plan-est`, `plan-bots`, `bots`, `stale`, `disabled` and `live` (estimated plan percentage
+plus four bots), followed by `offline` (91 s without a read) and `retained`
+(a payload without numbers after real readings). Additional captures cover
+retained bot/plan readings, plan age unknown, maximum wire values,
+`huge-percent` (INT32_MAX cents against a one-cent budget), and `unlimited`
+(the dollar-hero fallback with no limit).
+`test/test_grok_render.py` builds all five profiles and checks these transitions,
+caption and money widths/glyphs, and truncated NEEDS YOU counts. Additional
+QA captures include `window-expired` (a plan reading 11 seconds after a
+10-second reset, with the feed still fresh), `restored` (fresh values after retention) and
+`dollar-millions` (a dollar hero retaining cents).
+Set `TORGET_CAPTURE_DIR` to an existing directory to retain captures from
+multiple board builds. QA returns nonzero with a clear message if Grok was
+not compiled in. Empty is rendered first to verify the initial dash;
+disabled after real readings exercises retention.
+When the feed is disabled, bot rows are hidden and bot aggregates show dashes.
+
+Evidence is limited to simulator output and build coverage. CI builds every
+board with Grok off and with Grok on (`-D TORGET_GROK=ON`), plus the Grok
+simulator in the host gate. Grok-on firmware builds were also verified locally
+with ESP-IDF v5.5.2 for all five profiles.
+**Grok is not physically verified on any
+panel.** Native simulator captures do not certify touch, rotation, OTA or
+physical AMOLED rendering.
+
+Before the first successful poll, every profile shows a dash and WAITING, with
+bot rows and the usage bar hidden. No snapshot is recorded by initialization.
+OpenRouter captions use DAY, WEEK or MONTH for reported 1-day, 7-day or
+28–31-day windows: DAILY/WEEKLY/MONTHLY BUDGET with a limit,
+SPEND · DAY/WEEK/MONTH without one. Other or missing windows show BUDGET
+or SPEND respectively. Optional `windowSeconds`
+is an integer from 1 to 2678400. Pace uses this window when supplied. Without `windowSeconds` no pace marker
+is drawn, including on the round ring. xAI never sends it; plan supplies it
+only with `window`.
