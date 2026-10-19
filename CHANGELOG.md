@@ -5,6 +5,12 @@ on the [releases page](https://github.com/niclasvestlund-YT/vibepulse/releases).
 
 ## Unreleased
 
+- Make subscription plans the primary Grok host source: strict copied-percentage, user-counted and daily bot-estimate files, honest estimate/age labels, and optional secondary xAI/OpenRouter billing sources. `manual` remains a compatibility alias for `subscription`.
+
+- Add OpenRouter to the optional Grok host sources: per-key UTC month spend, budget/key limit and optional management-key account credits; auto selection is subscription plan → xAI → OpenRouter → bots.
+
+- Add an optional, default-off host Grok preview: subscription plan observations/estimates, optional xAI API billing and local bot status with bounded LAN payloads. See [Grok setup](docs/grok-pulse.md); no firmware changes.
+
 - OpenPulse now appears as the optional OPENROUTER switch in Labs; existing provider choices are preserved on upgrade.
 
 ### Added

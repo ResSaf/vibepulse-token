@@ -80,6 +80,7 @@ if __package__:
     )
     from .codex_rollout import codex_rollout_rate_limits, observation_timestamp
     from .github_monitor import GitHubMonitor, disabled_snapshot, normalize_repo
+    from .grok_monitor import GrokMonitor, grok_snapshot
     from .lovable_monitor import LovableMonitor
     from .lovable_browser import LovableBrowserBridge
     from .lovable_monitor import disabled_snapshot as lovable_disabled_snapshot
@@ -108,6 +109,7 @@ else:  # run directly: python3 tools/tokenserver/tokenserver.py
     )
     from codex_rollout import codex_rollout_rate_limits, observation_timestamp
     from github_monitor import GitHubMonitor, disabled_snapshot, normalize_repo
+    from grok_monitor import GrokMonitor, grok_snapshot
     from lovable_monitor import LovableMonitor
     from lovable_browser import LovableBrowserBridge
     from lovable_monitor import disabled_snapshot as lovable_disabled_snapshot
@@ -2972,6 +2974,7 @@ class Handler(BaseHTTPRequestHandler):
     agent_status = None  # background service, set in main
     max_tracker_store = None  # set in main
     github_monitor = None  # optional public repo monitor, set in main
+    grok_monitor = None  # optional local Grok source, default off
     lovable_monitor = None  # optional read-only Lovable credits, set in main
     lovable_browser = None  # separately configured local browser balance source
     plans = {"claude": None, "codex": None}  # set in main from --*-plan
@@ -3577,7 +3580,28 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, {"ok": True})
 
+    def _handle_grok_bots(self):
+        if self.grok_monitor is None:
+            self._send(404, {"error": "Grok is not enabled"})
+            return
+        if (not self._is_loopback() or not self._has_valid_loopback_host() or
+                self._header_values("Origin")):
+            self._send(403, {"error": "Grok ingress rejected"})
+            return
+        if not self._has_json_content_type():
+            self._send(415, {"error": "application/json required"})
+            return
+        try:
+            self.grok_monitor.store.accept(self._read_json_body(limit=1024))
+        except (ValueError, TypeError):
+            self._send(400, {"error": "invalid bot status"})
+            return
+        self._send(200, {"ok": True})
+
     def do_POST(self):
+        if self.path == "/api/grok/bots":
+            self._handle_grok_bots()
+            return
         if self.path == "/api/lovable/browser":
             self._handle_lovable_browser()
             return
@@ -3643,6 +3667,8 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(lambda: (self.github_monitor.snapshot()
                                  if self.github_monitor is not None
                                  else disabled_snapshot()))
+        elif self.path == "/api/grok":
+            self._reply(lambda: grok_snapshot(self.grok_monitor))
         elif self.path == "/api/lovable":
             # Numbers only: plan, credits, age. The OAuth token never leaves
             # the Keychain and is never part of this payload.
@@ -3661,7 +3687,7 @@ class Handler(BaseHTTPRequestHandler):
         failing_since = _compute_failing_since
         save_failing_since = _max_tracker_save_failing_since
         endpoints = ["/api/tokens", "/api/agent-status",
-                     "/api/max-tracker", "/api/github", "/api/lovable"]
+                     "/api/max-tracker", "/api/github", "/api/lovable", "/api/grok"]
         return {"service": "torget-tokenserver",
                 "rev": _SERVER_REV,
                 "srcFingerprint": _SERVER_SRC,
@@ -3672,6 +3698,9 @@ class Handler(BaseHTTPRequestHandler):
                            if self.github_monitor is not None
                            else disabled_snapshot()),
                 "lovable": self._lovable_snapshot(),
+                "grok": (self.grok_monitor.summary() if self.grok_monitor is not None
+                         else {"enabled": False, "source": "none",
+                               "stale": False, "botCount": 0}),
                 # Status, backoff, credential and header evidence come from
                 # one locked read so they always describe the same cycle.
                 **_probe_view(),
@@ -3766,6 +3795,14 @@ def _build_arg_parser():
         default=os.environ.get("VIBEPULSE_GITHUB_REPO") or None,
         help="optional public GitHub repo as owner/repository. "
              "Can also be set with VIBEPULSE_GITHUB_REPO.")
+    ap.add_argument(
+        "--grok", action="store_true",
+        default=os.environ.get("VIBEPULSE_GROK") == "1",
+        help="optional local Grok source; never published to relays")
+    ap.add_argument(
+        "--grok-source", choices=["auto", "subscription", "xai", "openrouter", "manual", "bots"],
+        default=os.environ.get("VIBEPULSE_GROK_SOURCE", "auto"),
+        help="Grok source (requires --grok)")
     ap.add_argument(
         "--lovable", action="store_true",
         default=os.environ.get("VIBEPULSE_LOVABLE") == "1",
@@ -4203,6 +4240,11 @@ def main():
                  "'someone'")
     Handler.github_monitor = github_monitor
 
+    grok_monitor = GrokMonitor(args.grok_source) if args.grok else None
+    if grok_monitor is not None:
+        grok_monitor.start()
+    Handler.grok_monitor = grok_monitor
+
     lovable_monitor = None
     if args.lovable:
         lovable_monitor = LovableMonitor()
@@ -4441,6 +4483,8 @@ def main():
             relay_publisher.stop()
         if github_monitor is not None:
             github_monitor.stop()
+        if grok_monitor is not None:
+            grok_monitor.stop()
         if lovable_monitor is not None:
             lovable_monitor.stop()
         backfill_stop.set()
