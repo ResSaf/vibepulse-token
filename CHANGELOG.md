@@ -5,6 +5,33 @@ on the [releases page](https://github.com/niclasvestlund-YT/vibepulse/releases).
 
 ## Unreleased
 
+## v1.5.0 — 2026-10-28
+
+Release notes: [Paper USB edition](docs/releases/2026-10-28-paper-usb.md).
+
+### Added
+
+- VibePulse Paper: a dedicated 800×480 Waveshare 3.97-inch e-paper USB
+  firmware/host target with tokenserver sources, licensed fonts, native fixtures,
+  model registry, source/protocol tests and CI build coverage. One Mac-connected
+  unit has owner-confirmed Codex data, orientation and navigation.
+- Content-based refresh: observation timestamps alone do not redraw the panel;
+  USB heartbeats preserve pixels. Partial updates retain panel power/baseline,
+  with full cleanup after ten partial changes. Owner confirmed quieter changes;
+  extended ghosting/stability and non-USB capabilities remain unqualified.
+### Fixed
+
+- Anchor Paper reset countdowns to the token snapshot, including cached quota
+  observations, and repaint unchanged pages after a firmware restart.
+
+### Changed
+
+- Run the same ten AMOLED firmware configurations in five parallel board jobs;
+  the required firmware check rejects failed, cancelled or skipped matrix runs.
+- Reworked the README around getting started, board choice and the Paper USB
+  edition, with real owner photographs and reproducible native images.
+- Pinned development-tool Pillow to 13.0.0 for the security update.
+
 ## v1.4.0 — 2026-10-19
 
 Release notes: [Grok preview, OpenRouter and 1.8 V2](docs/releases/2026-10-19-grok-openrouter-and-18-v2.md).

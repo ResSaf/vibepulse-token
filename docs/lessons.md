@@ -1,5 +1,46 @@
 # Lessons log
 
+## 2026-10-28 · E-paper ACKs can succeed with the panel rail off
+
+The simple 3.97 vendor example omitted factory ALDO3 power control: CRC/USB
+ACKs succeeded but the owner saw no image. Read the schematic and factory
+power path together; use only the panel rail, preserving charger settings.
+Physical visibility remains a separate gate. The follow-up host also skipped
+its first source read when the Mac monotonic clock began near zero: initialize
+unsampled time to negative infinity. Regression: `test_epaper397.py` drives
+monotonic zero and verifies the first raster contains a quota. New sample
+clock alone must not trigger full e-paper refresh; content keys and heartbeats
+guard that boundary. Physical evidence: `docs/reviews/2026-10-28-epaper397.md`.
+
+## 2026-10-28 · A quota observation is not the countdown epoch
+
+The e-paper reader combined `WeekObservedAt` with `WeekResetMin`, but the
+server computes the minutes at HTTP snapshot time while an observation may
+be cached for hours. Capture the token response time separately (before the
+agent request), retain it between reads and anchor the countdown there.
+Regressions cover an hour-old reading, a later render and a refreshed countdown.
+Minute-rounded remaining times also introduce sub-minute reconstruction jitter;
+retain the deadline across adjacent estimates within the rounding/HTTP-latency
+uncertainty, and clear it when the source no longer supplies a deadline.
+
+A firmware restart also destroys the host's assumption about stored pixels.
+A new verified HELLO must invalidate the raster cache, even on the constant
+Device page. Send only one identity query per handshake. A known greeting during a transfer
+can be a queued startup-query reply: a matching raster ACK remains authoritative.
+If the transfer loses its ACK, the bounded timeout repeats identity verification.
+A greeting while idle invalidates the cached frame. Regressions cover startup
+noise, queued greetings and a real bridge loop through two identical
+Device rasters around a boot greeting, rather than checking a flag in isolation.
+
+Pillow's optional RAQM support differs across platform wheels. Pin BASIC text
+layout explicitly; reproduce all six native publication images on Mac, Linux
+and Windows instead of assuming the same font file gives identical pixels.
+
+The quota-only reader declares `X-VibePulse-Accepts: usage-totals`. Otherwise
+startup placeholder volume totals can make the server reject a request even
+when independent weekly quotas are available. The reader never consumes those
+volume counters; the regression exercises the warming-server acceptance gate.
+
 ## 2026-10-18 · File identity and accounting windows are not freshness
 
 Grok files could change within an unchanged mtime/size pair, and invalid
